@@ -1,7 +1,0 @@
-/** Server-side connector. No browser keys, direct ERP database writes or payment updates. */
-export function createServiceHubClient({baseUrl,apiKey,fetcher=fetch}){
- const base=new URL(baseUrl);if(base.protocol!=='https:'||base.username||base.password||base.search||base.hash)throw Error('Use the HTTPS API base URL from ERP Settings.');if(!/^shw_[A-Za-z0-9_-]{43}$/.test(apiKey||''))throw Error('A server-side ServiceHub integration key is required.');
- const root=base.href.replace(/\/$/,'');
- async function call(path,{method='GET',data,key}={}){if(key&&!/^[A-Za-z0-9_.:-]{1,120}$/.test(key))throw Error('Use a stable external reference as the idempotency key.');const response=await fetcher(root+path,{method,headers:{Authorization:'Bearer '+apiKey,...(data?{'Content-Type':'application/json','Idempotency-Key':key}:{})},body:data?JSON.stringify(data):undefined,signal:AbortSignal.timeout(15000),redirect:'error'});const result=await response.json();if(!response.ok||!result.success){const error=new Error(result.error||'ERP request failed.');error.status=response.status;throw error}return result.data}
- return {submit:(kind,externalId,data)=>{if(!['enquiries','bookings'].includes(kind))throw Error('Choose enquiries or bookings.');if(!externalId)throw Error('External reference required.');return call('/'+kind,{method:'POST',data,key:externalId})},status:id=>{if(!Number.isSafeInteger(Number(id))||Number(id)<1)throw Error('Valid request ID required.');return call('/requests/'+Number(id))}};
-}

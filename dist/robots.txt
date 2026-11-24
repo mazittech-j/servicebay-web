@@ -1,3 +1,0 @@
-User-agent: *
-Allow: /
-Sitemap: https://servicebay-technical-services.devotedcypress1.chatgpt.site/sitemap.xml

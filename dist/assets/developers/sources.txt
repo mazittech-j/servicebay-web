@@ -1,6 +1,0 @@
-Official marks used to identify the listed organisations. Each mark belongs to its respective owner.
-
-Meraas — inline SVG in the masthead of https://meraas.com/en
-Sobha Realty — https://sobharealty.com/themes/sobha_uplift/images/web-take-s-logo.svg?v=21
-Dubai Holding — https://cdn.prod.website-files.com/68f5cbe21e1b5a51012ad187/691dd0ad61fb42f26b5b5acd_Logo.svg (official Dubai Holding website)
-Aldar — https://images1.cmp.optimizely.com/assets/aldar-logo-frame-15px2x.png/Zz01ZDEwOTJkMGRjMTAxMWYwODY0ZTI2OTk2YzEyNDVkYw== (official Aldar homepage masthead)
