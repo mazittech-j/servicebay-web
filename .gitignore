@@ -1,9 +1,0 @@
-node_modules/
-.env
-.env.*
-!.env.example
-.local/
-.vercel/
-backend/generated.mjs
-
-servicebay-private-backup*.json
