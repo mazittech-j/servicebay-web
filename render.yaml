@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: servicebay-website
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build && npm run db:migrate
+    startCommand: npm start
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "24"
+      - key: NODE_ENV
+        value: production
+      - key: SITE_ACCESS
+        value: public
+      - key: DATABASE_URL
+        sync: false
+      - key: ADMIN_USERNAME
+        value: owner
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: SITE_ORIGIN
+        sync: false
