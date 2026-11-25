@@ -57,7 +57,7 @@ export function records(query, dialect="sqlite", batch, actor="ServiceBay") {
       return {items:rows.slice(0,25).map(row=>{const r=JSON.parse(row.body);return {created:r.created,status:r.status,service:r.service||'Service quote',area:r.area||'',property:r.property||'',country:r.country||'',details:r.details??r.message,receipt:r.receipt||'',history:r.history||[]}}),next:rows.length>25?rows[24].key:null};
     },
     async countRequests(){const [r]=await query("SELECT count(*) AS total FROM servicebay_records WHERE key LIKE 'request/%'",[]);return Number(r.total)},
-    async staff(){const rows=await query("SELECT body FROM servicebay_records WHERE key LIKE 'staff/%' ORDER BY key",[]);return rows.map(row=>{const u=JSON.parse(row.body);return {name:u.name,email:u.email,username:u.username||'',status:u.active?'Active':u.until>Date.now()?'Invited':'Inactive'}})},
+    async staff(){const rows=await query("SELECT body FROM servicebay_records WHERE key LIKE 'staff/%' ORDER BY key",[]);return rows.map(row=>{const u=JSON.parse(row.body);return {name:u.name,email:u.email,username:u.username||'',status:u.active?'Active':u.until>Date.now()?'Invited':'Inactive',resetRequestedAt:u.resetRequestedAt||'',resetNote:u.resetNote||'',totpEnabled:!!u.totp?.enabled}})},
     async exportBatch(cursor='') {
       const rows=await query("SELECT key,body,revision,updated FROM servicebay_records WHERE key > ? AND (key='settings' OR key LIKE 'page/%' OR key LIKE 'request/%' OR key LIKE 'activity/%' OR key LIKE 'receipt/%' OR key LIKE '/media/%' OR key LIKE 'customer/%') ORDER BY key LIMIT 4",[cursor]);
       return {rows,next:rows.length===4?rows[3].key:null};

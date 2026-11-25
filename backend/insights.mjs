@@ -1,5 +1,5 @@
 export const statuses=['Received','In review','Contacted','Scheduled','Completed','Cancelled','Closed'];
-export const activityGroups=['Quotes','Website','Team','Email','Studio'];
+export const activityGroups=['Quotes','Website','Team','Email','Studio','Security'];
 export const event=(group,action,detail='',by)=>({group,action,detail,by});
 const bucket=status=>['Received','In review','Contacted','Pending'].includes(status)?'pending':status==='Scheduled'?'scheduled':status==='Completed'?'completed':'other';
 const blank=()=>({total:0,pending:0,scheduled:0,completed:0,other:0});

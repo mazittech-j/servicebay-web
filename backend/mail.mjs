@@ -88,3 +88,18 @@ export async function testSender(db,env,user){
   await db.save('security/mail-test',{from:config.from,revision:row.version,at,status},old.version,event('Email','Tested receipt sender',status));
   return {status,at};
 }
+
+export async function sendSystemEmail(db,env,{to,subject,text,idempotencyKey}){
+  if(!to||!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(to))return 'No recipient';
+  const config=await settings(db,env,true);
+  if(!config.configured)return 'Awaiting email setup';
+  const payload={from:'ServiceBay <'+config.from+'>',to:[to],subject,text};
+  try{
+    const headers={Authorization:'Bearer '+config.key,'Content-Type':'application/json'};
+    if(idempotencyKey)headers['Idempotency-Key']=idempotencyKey;
+    const response=await fetch('https://api.resend.com/emails',{method:'POST',redirect:'error',signal:AbortSignal.timeout(8000),headers,body:JSON.stringify(payload)});
+    if(response.ok&&(await response.json()).id)return 'Accepted';
+    return 'Provider error ('+response.status+')';
+  }catch{return 'Unconfirmed'}
+}
+

@@ -3,12 +3,13 @@ import {event,activityGroups,statuses,reportingPeriod,serviceReport} from './ins
 import {assets,routes} from './generated.mjs';
 import {records} from './store.mjs';
 import {renderPage,cleanSettings,cleanPage,EMPTY_PAGE,defaults,fonts,fail,txt} from './content.mjs';
-import {authAction, session, isSiteOwner, inviteEditor, hash, createEditor, updateOwner, nodeOwnerLogin, quoteCustomer} from './accounts.mjs';
+import {authAction, session, isSiteOwner, inviteEditor, hash, createEditor, updateOwner, nodeOwnerLogin, quoteCustomer, manage2fa, issueStaffReset, dismissStaffReset} from './accounts.mjs';
+import {detectProbe, detectHoneypot, isIpBlocked, recordIncident, shieldState, updateShield, testShieldAlert} from './shield.mjs';
 import {mailSettings,sendReceipt,emailStatus,testSender} from './mail.mjs';
 import {admin,portal,studioLogin} from './views.mjs';
 import {createServiceHubClient} from './erp.mjs';
-const json=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'}});
-const html=value=>new Response(value,{headers:{'Content-Type':'text/html; charset=utf-8','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'strict-origin-when-cross-origin','X-Frame-Options':'SAMEORIGIN'}});
+const json=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','X-Frame-Options':'SAMEORIGIN','Referrer-Policy':'strict-origin-when-cross-origin'}});
+const html=value=>new Response(value,{headers:{'Content-Type':'text/html; charset=utf-8','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'strict-origin-when-cross-origin','X-Frame-Options':'SAMEORIGIN','Permissions-Policy':'camera=(), microphone=(), geolocation=()','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'self'; base-uri 'self'; form-action 'self'"}});
 const bytes=encoded=>Uint8Array.from(atob(encoded),ch=>ch.charCodeAt(0));
 async function digest(value){const a=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value));return Array.from(new Uint8Array(a),x=>x.toString(16).padStart(2,'0')).join('')}
 async function body(req,max=140000){
@@ -52,7 +53,13 @@ export async function serve(request,env,store,platform){
   try{
     const u=new URL(request.url),path=u.pathname,method=request.method;
     if(!['GET','POST','HEAD'].includes(method))return json({error:'Unsupported method.'},405);
-    if(method==='POST'&&request.headers.get('origin')!==u.origin)return json({error:'Open the form on this site and retry.'},403);
+    const reqOrigin=request.headers.get('origin');
+    if(method==='POST'&&reqOrigin!==u.origin&&(!platform.requestOrigin||reqOrigin!==platform.requestOrigin))return json({error:'Open the form on this site and retry.'},403);
+    const probeReason=detectProbe(path,u.search);
+    if(probeReason){
+      await recordIncident({db:store,env,ip:platform.ip,reason:'Attack probe blocked',target:path,detail:probeReason,immediateBlock:true});
+      return json({error:'Request blocked by security shield.'},403);
+    }
     const adminRoute=path==='/admin'||path.startsWith('/admin/')||path.startsWith('/api/admin/')||u.searchParams.get('studio')==='1';
     const privateNode=platform.kind==='node'&&env.SITE_ACCESS!=='public';
     const studioAuth=path.startsWith('/api/studio-auth/');
@@ -65,8 +72,25 @@ export async function serve(request,env,store,platform){
     }
     const customerAuth=path.startsWith('/api/customer-auth/');
     if((studioAuth||customerAuth)&&method==='POST'){
-      const result=await authAction({req:request,db:store,scope:studioAuth?'studio':'customer',action:path.split('/').pop(),env,platform,input:await body(request,4096)});
-      const reply=json(result.data);if(result.cookie)reply.headers.set('Set-Cookie',result.cookie);return reply;
+      const action=path.split('/').pop();
+      if(action!=='logout'){
+        const blockedMins=await isIpBlocked(store,platform.ip);
+        if(blockedMins>0)return json({error:'Security shield active due to repeated suspicious attempts. Try again in '+blockedMins+' minute'+(blockedMins===1?'':'s')+'.'},429);
+      }
+      const input=await body(request,4096);
+      if(detectHoneypot(input)){
+        await recordIncident({db:store,env,ip:platform.ip,reason:'Bot attack blocked (honeypot)',target:path,detail:'Automated form fill detected',immediateBlock:true});
+        return json({error:'Request blocked by security shield.'},403);
+      }
+      try{
+        const result=await authAction({req:request,db:store,scope:studioAuth?'studio':'customer',action,env,platform,input});
+        const reply=json(result.data);if(result.cookie)reply.headers.set('Set-Cookie',result.cookie);return reply;
+      }catch(err){
+        if(studioAuth&&action!=='logout'&&(err.status===401||err.status===403)){
+          await recordIncident({db:store,env,ip:platform.ip,reason:'Failed studio sign-in attempt',target:String(input?.email||'').slice(0,120),detail:err.message});
+        }
+        throw err;
+      }
     }
     if(adminRoute&&!studioUser){
       if(studioPage&&method==='GET'){
@@ -78,7 +102,19 @@ export async function serve(request,env,store,platform){
     }
     if(studioPage)return html(admin(studioUser));
     if(studioUser?.role==='editor'&&path.startsWith('/api/admin/')&&
-       !(path==='/api/admin/state'||path==='/api/admin/media'||(path==='/api/admin/content'&&u.searchParams.get('scope')!=='site')))fail('This action requires the website owner.',403);
+       !(path==='/api/admin/state'||path==='/api/admin/media'||path==='/api/admin/2fa'||(path==='/api/admin/content'&&u.searchParams.get('scope')!=='site')))fail('This action requires the website owner.',403);
+    if(path==='/api/admin/2fa'){
+      if(method==='GET')return json(await manage2fa({db:store,platform,user:studioUser,input:{action:'status'}}));
+      if(method==='POST')return json(await manage2fa({db:store,platform,user:studioUser,input:await body(request,1024)}));
+    }
+    if(path==='/api/admin/shield'){
+      if(method==='GET')return json(await shieldState(store,env));
+      if(method==='POST'){
+        const input=await body(request,1024);
+        if(input.action==='test')return json(await testShieldAlert(store,env));
+        return json(await updateShield(store,env,input));
+      }
+    }
     if(path==='/api/admin/profile'&&method==='POST'){
       const result=await updateOwner(request,store,env,platform,await body(request,4096));
       const reply=json(result.data);reply.headers.set('Set-Cookie',result.cookie);return reply;
@@ -87,7 +123,7 @@ export async function serve(request,env,store,platform){
     if(path==='/api/admin/mail')return json(await mailSettings(store,env,method==='POST'?await body(request,2048):null));
     if(path==='/api/admin/staff'){
       if(method==='GET')return json({items:await store.staff()});
-      if(method==='POST'){const input=await body(request,2048);if(input.action==='create'){await createEditor(store,input,env,platform);return json({ok:true},201)}if(input.action==='revoke'){const key='staff/'+await hash(txt(input.email,150).toLowerCase());const old=await store.get(key);if(!old.data)fail('Account not found.',404);await store.save(key,{...old.data,active:false,invite:null,until:0,authRevision:(old.data.authRevision||0)+1},old.version,event('Team','Revoked editor access',old.data.name));return json({ok:true})}
+      if(method==='POST'){const input=await body(request,2048);if(input.action==='create'){await createEditor(store,input,env,platform);return json({ok:true},201)}if(input.action==='reset-link'){return json(await issueStaffReset({db:store,env,email:txt(input.email,150).toLowerCase(),origin:platform.requestOrigin||u.origin}))}if(input.action==='dismiss-reset'){return json(await dismissStaffReset({db:store,email:txt(input.email,150).toLowerCase()}))}if(input.action==='revoke'){const key='staff/'+await hash(txt(input.email,150).toLowerCase());const old=await store.get(key);if(!old.data)fail('Account not found.',404);await store.save(key,{...old.data,active:false,invite:null,until:0,authRevision:(old.data.authRevision||0)+1},old.version,event('Team','Revoked editor access',old.data.name));return json({ok:true})}
         return json({invite:await inviteEditor(store,input),email:txt(input.email,150).toLowerCase()})}
     }
     if(path==='/api/admin/activity'&&method==='GET'){
@@ -202,7 +238,7 @@ export async function serve(request,env,store,platform){
   }catch(e){const status=Number(e.status)||500;return json({error:status===500?'The service is temporarily unavailable.':e.message},status)}
 }
 export default {fetch(request,env,ctx){
-  if(ctx?.nodeStore)return serve(request,env,ctx.nodeStore,{kind:"node",storage:env.DATABASE_URL?"PostgreSQL":"Local SQLite",ip:ctx.ip});
+  if(ctx?.nodeStore)return serve(request,env,ctx.nodeStore,{kind:"node",storage:env.DATABASE_URL?"PostgreSQL":"Local SQLite",ip:ctx.ip,requestOrigin:ctx.requestOrigin});
   const prepared=(sql,args)=>env.DB.prepare(sql).bind(...args);
   const store=records(async(sql,args)=>(await prepared(sql,args).all()).results,'sqlite',async statements=>(await env.DB.batch(statements.map(([sql,args])=>prepared(sql,args)))).map(v=>v.results));
   return serve(request,env,store,{kind:'sites',storage:'Sites database',ip:request.headers.get('CF-Connecting-IP')||request.headers.get('oai-authenticated-user-id')});

@@ -223,3 +223,77 @@ test('Sender test targets the owner only, reports acceptance or provider rejecti
     assert.equal((await test()).status,409);
   }finally{globalThis.fetch=original}
 });
+
+test('Owner login, requestOrigin CSRF, Google Authenticator 2FA, team password reset and security shield',async()=>{
+  const {totpCode}=await import('./totp.mjs');
+  const nodeCfg={SITE_ACCESS:'private',ADMIN_PASSWORD:'short-12char',ADMIN_USERNAME:'owner',ADMIN_EMAIL:'owner-node@example.test',RESEND_API_KEY:'re_test_key_123456',RECEIPT_FROM_EMAIL:'alerts@servicebay.test'};
+  const altOrigin='https://servicebay-preview.vercel.app';
+  const nodeCtx={nodeStore:store,ip:'198.51.100.10',requestOrigin:altOrigin};
+
+  // Wrong password returns clear 401 message even when requestOrigin differs from canonical origin
+  const bad=await call('/api/studio-auth/login',{config:nodeCfg,ctx:nodeCtx,headers:{origin:altOrigin},post:{email:'owner',password:'wrong-pass'}});
+  assert.equal(bad.status,401);
+  assert.match((await bad.json()).error,/Incorrect/);
+
+  // External origin still blocked
+  const csrf=await call('/api/studio-auth/login',{config:nodeCfg,ctx:nodeCtx,headers:{origin:'https://evil.example'},post:{email:'owner',password:nodeCfg.ADMIN_PASSWORD}});
+  assert.equal(csrf.status,403);
+
+  // Valid owner login works with 12-char ADMIN_PASSWORD and ADMIN_EMAIL
+  const ok=await call('/api/studio-auth/login',{config:nodeCfg,ctx:nodeCtx,headers:{origin:altOrigin},post:{email:'owner-node@example.test',password:nodeCfg.ADMIN_PASSWORD}});
+  assert.equal(ok.status,200);
+  const nodeCookie=cookieOf(ok);assert.ok(nodeCookie);
+
+  // Set up Google Authenticator 2FA
+  const begin=await call('/api/admin/2fa',{config:nodeCfg,ctx:nodeCtx,headers:{origin:altOrigin,Cookie:nodeCookie},post:{action:'begin'}});
+  assert.equal(begin.status,200);
+  const {secret,uri,qrSvg}=await begin.json();
+  assert.ok(secret&&uri.startsWith('otpauth://totp/')&&qrSvg.includes('<svg'));
+  const code=await totpCode(secret);
+  const enabled=await call('/api/admin/2fa',{config:nodeCfg,ctx:nodeCtx,headers:{origin:altOrigin,Cookie:nodeCookie},post:{action:'enable',code}});
+  assert.equal(enabled.status,200);
+  const {backupCodes}=await enabled.json();
+  assert.equal(backupCodes.length,8);
+
+  // Login now requires 2FA challenge, then verifies with backup code
+  const step1=await call('/api/studio-auth/login',{config:nodeCfg,ctx:nodeCtx,headers:{origin:altOrigin},post:{email:'owner',password:nodeCfg.ADMIN_PASSWORD}});
+  assert.equal(step1.status,200);
+  const s1=await step1.json();
+  assert.equal(s1.requires2fa,true);assert.ok(s1.challenge);
+  const step2=await call('/api/studio-auth/verify-2fa',{config:nodeCfg,ctx:nodeCtx,headers:{origin:altOrigin},post:{challenge:s1.challenge,code:backupCodes[0]}});
+  assert.equal(step2.status,200);assert.ok(cookieOf(step2));
+
+  // Team forgot password & owner reset link flow
+  const original=globalThis.fetch,alerts=[];
+  try{
+    globalThis.fetch=async(url,req)=>{alerts.push(JSON.parse(req.body));return Response.json({id:'alert-msg'})};
+    const forgot=await call('/api/studio-auth/forgot',{config:nodeCfg,ctx:{nodeStore:store,ip:'198.51.100.20',requestOrigin:altOrigin},headers:{origin:altOrigin},post:{email:'desk-editor@example.test',note:'Locked out'}});
+    assert.equal(forgot.status,200);
+    assert.ok(alerts.some(m=>m.subject.includes('Password reset request')));
+    const staffList=await (await call('/api/admin/staff',{config:nodeCfg,ctx:nodeCtx,headers:{Cookie:nodeCookie}})).json();
+    const desk=staffList.items.find(i=>i.email==='desk-editor@example.test');
+    assert.ok(desk.resetRequestedAt);assert.equal(desk.resetNote,'Locked out');
+    const issued=await (await call('/api/admin/staff',{config:nodeCfg,ctx:nodeCtx,headers:{origin:altOrigin,Cookie:nodeCookie},post:{action:'reset-link',email:'desk-editor@example.test'}})).json();
+    assert.ok(issued.resetToken);
+    const resetRes=await call('/api/studio-auth/reset',{config:nodeCfg,ctx:{nodeStore:store,ip:'198.51.100.20',requestOrigin:altOrigin},headers:{origin:altOrigin},post:{email:'desk-editor@example.test',token:issued.resetToken,password:'brand-new-team-passphrase-2026'}});
+    assert.equal(resetRes.status,200);assert.ok(cookieOf(resetRes));
+
+    // Security shield: honeypot & brute-force lockout email owner
+    const botCtx={nodeStore:store,ip:'203.0.113.55',requestOrigin:altOrigin};
+    const bot=await call('/api/studio-auth/login',{config:nodeCfg,ctx:botCtx,headers:{origin:altOrigin},post:{email:'owner',password:'1234',website:'http://spam.bot'}});
+    assert.equal(bot.status,403);
+    assert.ok(alerts.some(m=>m.subject.includes('Bot attack blocked')));
+    const blocked=await call('/api/studio-auth/login',{config:nodeCfg,ctx:botCtx,headers:{origin:altOrigin},post:{email:'owner',password:nodeCfg.ADMIN_PASSWORD}});
+    assert.equal(blocked.status,429);
+
+    // Attack probe blocked
+    const probe=await call('/.env',{config:nodeCfg,ctx:{nodeStore:store,ip:'203.0.113.99'}});
+    assert.equal(probe.status,403);
+    assert.ok(alerts.some(m=>m.subject.includes('Attack probe blocked')));
+
+    // Shield state visible to owner
+    const sh=await (await call('/api/admin/shield',{config:nodeCfg,ctx:nodeCtx,headers:{Cookie:nodeCookie}})).json();
+    assert.equal(sh.active,true);assert.ok(sh.events.length>=2);
+  }finally{globalThis.fetch=original}
+});
+

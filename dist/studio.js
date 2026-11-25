@@ -11,7 +11,7 @@
   panel.addEventListener('input',tracked);
   window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue=''}});
   function discard(){return !dirty||confirm('Leave without saving these changes?')}
-  const titles={activity:'Activity log',rates:'Services & AMC',profile:'My account',team:'Team access',overview:'Overview',pages:'Page editor',company:'Company & theme',pricing:'Services & AMC',connections:'Integrations',requests:'Customer requests'};
+  const titles={activity:'Activity log',rates:'Services & AMC',profile:'My account',team:'Team access',security:'Security shield',security2fa:'Two-factor authentication',overview:'Overview',pages:'Page editor',company:'Company & theme',pricing:'Services & AMC',connections:'Integrations',requests:'Customer requests'};
   function assetField(parent,title,value,onChange){const input=field(parent,title,value);input.placeholder='/assets/… or https://…';input.oninput=()=>onChange(input.value);const up=el('input');up.type='file';up.accept='image/png,image/jpeg,image/webp';up.setAttribute('aria-label','Upload image');parent.append(up);up.onchange=async()=>{try{const file=up.files[0];if(!file)return;if(file.size>512000)throw Error('Choose an image under 500 KB.');const data=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result.split(',')[1]);r.onerror=reject;r.readAsDataURL(file)});const {url}=await api('media',{data,type:file.type});input.value=url;onChange(url);dirty=true;notice.textContent='Image uploaded. Save the page to use it.'}catch(e){notice.textContent=e.message}};return input}
   async function open(next){
     const ticket=++epoch;tab=next;dirty=false;notice.textContent='';panel.replaceChildren();by('title').textContent=titles[tab];
@@ -21,7 +21,9 @@
     if(tab==='activity'){await activityLog(ticket);return}
     if(tab==='pricing'){catalogTabs();await serviceDashboard(ticket);return}
     if(tab==='team'){await team(ticket);return}
-    if(tab==='profile'){profile();return}
+    if(tab==='profile'){await profile(ticket);return}
+    if(tab==='security'){await securityShield(ticket);return}
+    if(tab==='security2fa'){await twoFactorCard(panel,ticket);return}
     if(tab==='requests'){await inbox(ticket);return}
     const global=tab!=='pages',endpoint='content?'+(global?'scope=site':'path='+encodeURIComponent(page));
     const item=await api(endpoint);if(ticket!==epoch)return;let data=item.draft,version=item.version;
@@ -115,7 +117,7 @@
   }
   async function activityLog(ticket){
     const c=card(panel),bar=el('div',undefined,'section-head');c.append(bar);bar.append(el('h2','Recorded activity'));
-    const group=field(bar,'Filter activity','All events','text',['All events','Quotes','Website','Team','Email','Studio']);group.oninput=e=>e.stopPropagation();
+    const group=field(bar,'Filter activity','All events','text',['All events','Quotes','Website','Team','Email','Studio','Security']);group.oninput=e=>e.stopPropagation();
     const list=el('div'),foot=el('div');c.append(el('p','New events are recorded in Dubai time.','hint'),list,foot);let seq=0;
     async function load(cursor=''){
       const order=++seq,v=await api('activity?'+new URLSearchParams({group:group.value==='All events'?'':group.value,...(cursor?{cursor}:{})}));
@@ -171,9 +173,13 @@
     mode.onchange=draw;base.addEventListener('input',()=>sample.style.fontSize=base.value+'px');draw();
   }
 
+  document.addEventListener('click',e=>{const btn=e.target.closest('.pw-toggle');if(!btn)return;const input=btn.parentElement?.querySelector('input');if(!input)return;const show=input.type==='password';input.type=show?'text':'password';btn.textContent=show?'Hide':'Show';btn.setAttribute('aria-pressed',String(show));btn.setAttribute('aria-label',show?'Hide password':'Show password')});
   function secret(parent,label,hint=''){
     const input=field(parent,label,'','password');input.autocomplete='new-password';
-    if(hint)input.placeholder=hint;return input;
+    if(hint)input.placeholder=hint;
+    const wrap=el('span',undefined,'pw-wrap');input.replaceWith(wrap);
+    const toggle=el('button','Show','pw-toggle');toggle.type='button';toggle.setAttribute('aria-label','Show password');toggle.setAttribute('aria-pressed','false');
+    wrap.append(input,toggle);return input;
   }
   async function emailConfig(ticket){
     const x=await api('mail');if(ticket!==epoch)return;
@@ -191,12 +197,79 @@
     }else c.append(el('p','Configure RESEND_API_KEY and RECEIPT_FROM_EMAIL on this host.'));
     test.disabled=!x.configured||!cfg.user.email?.includes('@');host.append(test);c.append(host,el('p',cfg.user.email?.includes('@')?'Test recipient · '+cfg.user.email:'Set your email in My account to receive a test.','stamp'));
   }
-  function profile(){
+  async function profile(ticket){
     const c=card(panel,'Studio sign-in details');c.append(el('p','Update your studio login and confirm with your current password. Changes sign out other studio sessions.'));
     const g=el('div',undefined,'fields');c.append(g);
     const name=field(g,'Display name',cfg.user.name),login=field(g,'Username',cfg.user.username),email=field(g,'Login email',cfg.user.email,'email'),current=secret(g,'Current password');
     current.autocomplete='current-password';const fresh=secret(g,'New password','Leave blank to keep your password'),confirm=secret(g,'Confirm new password');
     buttons(c,button('Save account details',async()=>{if(fresh.value!==confirm.value)throw Error('The new passwords do not match.');await api('profile',{name:name.value,username:login.value,email:email.value,currentPassword:current.value,newPassword:fresh.value});dirty=false;location.replace('/admin/#profile')},'primary'));
+    await twoFactorCard(panel,ticket);
+  }
+  async function twoFactorCard(host,ticket){
+    const s=await api('2fa');if(ticket!==epoch)return;
+    const c=card(host,'Google Authenticator (2FA)');
+    const box=el('div');c.append(box);
+    const renderStatus=(state)=>{
+      box.replaceChildren();
+      box.append(el('p',state.enabled?'Google Authenticator is active on your account. Backup codes remaining: '+state.backupRemaining+'.':'Protect your studio login with a 6-digit code from Google Authenticator.'));
+      if(!state.enabled){
+        buttons(box,button('Set up Google Authenticator',async()=>{
+          const setup=await api('2fa',{action:'begin'});
+          box.replaceChildren();
+          box.append(el('p','Scan this QR code in Google Authenticator (or enter the key manually), then enter the 6-digit code below.'));
+          const qrWrap=el('div',undefined,'qr-box');
+          const doc=new DOMParser().parseFromString(setup.qrSvg,'image/svg+xml');
+          if(doc.documentElement)qrWrap.append(document.importNode(doc.documentElement,true));
+          const keyEl=el('p');keyEl.innerHTML='Manual key: <code>'+setup.secret.replace(/[<>&]/g,'')+'</code>';
+          const code=field(box,'6-digit verification code','','text');code.inputMode='numeric';code.maxLength=10;code.placeholder='123456';
+          box.prepend(qrWrap,keyEl);
+          buttons(box,button('Verify & enable 2FA',async()=>{
+            const res=await api('2fa',{action:'enable',code:code.value});
+            dirty=false;
+            box.replaceChildren(el('p','Google Authenticator is now enabled! Save these one-time backup codes in a safe place:'));
+            const pre=el('pre',res.backupCodes.join('\n'),'backup-codes');box.append(pre);
+            buttons(box,button('Done',()=>renderStatus({enabled:true,backupRemaining:res.backupCodes.length}),'secondary'));
+            notice.textContent='Google Authenticator 2FA enabled.';
+          },'primary'),button('Cancel',()=>renderStatus(state),'secondary'));
+        },'primary'));
+      }else{
+        const code=field(box,'Enter 6-digit code or backup code to disable','','text');code.maxLength=16;
+        buttons(box,button('Disable Google Authenticator',async()=>{
+          const res=await api('2fa',{action:'disable',code:code.value});
+          dirty=false;renderStatus(res);notice.textContent='Google Authenticator 2FA disabled.';
+        },'secondary'));
+      }
+    };
+    renderStatus(s);
+  }
+  async function securityShield(ticket){
+    const s=await api('shield');if(ticket!==epoch)return;
+    const c=card(panel,'Security shield & attack alerts');
+    c.append(el('p','Protects studio sign-in and forms against brute-force logins, bot spam, and attack probes. Alerts are sent to the owner email when threats are blocked.'));
+    const g=el('div',undefined,'fields');c.append(g);
+    const activeWrap=el('label',undefined,'check');const activeBox=el('input');activeBox.type='checkbox';activeBox.checked=s.active;activeWrap.append(activeBox,document.createTextNode('Security shield active (auto-block & email alerts)'));
+    const alertEmail=field(g,'Security alert email',s.alertEmail,'email');alertEmail.placeholder=s.effectiveEmail||'owner@example.com';
+    g.append(activeWrap);
+    const out=el('p',s.effectiveEmail?'Alerts will be sent to: '+s.effectiveEmail:'Set an owner email above (or in My account) to receive attack alert emails.','stamp');
+    c.append(out);
+    buttons(c,button('Save shield settings',async()=>{
+      const updated=await api('shield',{active:activeBox.checked,alertEmail:alertEmail.value});
+      dirty=false;out.textContent=updated.effectiveEmail?'Alerts will be sent to: '+updated.effectiveEmail:'Set an owner email above to receive attack alert emails.';
+      notice.textContent='Security shield settings saved.';
+    },'primary'),button('Send test alert email',async()=>{
+      const res=await api('shield',{action:'test'});
+      notice.textContent='Test security alert to '+res.to+': '+res.status+'.';
+      await open('security');
+    },'secondary'));
+    await twoFactorCard(panel,ticket);
+    const logCard=card(panel,'Recent blocked threats & security events');
+    if(!s.events.length)logCard.append(el('p','No security threats or blocks recorded yet.'));
+    for(const ev of s.events){
+      const row=el('div',undefined,'panel-row'),h=el('div',undefined,'section-head');
+      h.append(el('strong',ev.reason),el('span',stamp(ev.at),'stamp'));
+      row.append(h,el('p',[ev.target?'Target: '+ev.target:'',ev.ip?'IP: '+ev.ip:'',ev.detail].filter(Boolean).join(' · ')));
+      logCard.append(row);
+    }
   }
   async function team(ticket){
     const r=await api('staff');if(ticket!==epoch)return;
@@ -206,8 +279,29 @@
     const name=field(grid,'Full name',''),login=field(grid,'Username',''),email=field(grid,'Work email','','email'),pw=secret(grid,'Password','At least 15 characters'),confirm=secret(grid,'Confirm password');
     buttons(create,button('Create account',async()=>{if(pw.value!==confirm.value)throw Error('The passwords do not match.');await api('staff',{action:'create',name:name.value,username:login.value,email:email.value,password:pw.value});await open('team');notice.textContent='Editor account created. The editor can sign in with the username or work email.'},'primary'));
     const roster=card(split,'Team directory');if(!r.items.length)roster.append(el('p','Your team accounts will appear here.'));
-    for(const row of r.items){const item=el('div',undefined,'panel-row'),h=el('div',undefined,'section-head');h.append(el('strong',row.name),el('span',row.status,'status-chip'));item.append(h,el('p',[row.username,row.email].filter(Boolean).join(' · ')));
-      if(['Active','Invited'].includes(row.status))buttons(item,button('Revoke access',async()=>{if(confirmAccess(row.email)){await api('staff',{action:'revoke',email:row.email});await open('team')}}));roster.append(item)}
+    for(const row of r.items){
+      const item=el('div',undefined,'panel-row'),h=el('div',undefined,'section-head'),chips=el('div',undefined,'section-head');
+      chips.append(el('span',row.status,'status-chip'));
+      if(row.totpEnabled)chips.append(el('span','2FA on','status-chip'));
+      if(row.resetRequestedAt)chips.append(el('span','Reset requested','stage-pill'));
+      h.append(el('strong',row.name),chips);
+      item.append(h,el('p',[row.username,row.email].filter(Boolean).join(' · ')));
+      if(row.resetRequestedAt){
+        item.append(el('p','Password reset requested on '+stamp(row.resetRequestedAt)+(row.resetNote?' — "'+row.resetNote+'"':''),'hint'));
+      }
+      const linkOut=el('p',undefined,'stamp');item.append(linkOut);
+      const acts=[];
+      if(row.status==='Active')acts.push(button('Send reset link',async()=>{
+        const res=await api('staff',{action:'reset-link',email:row.email});
+        const url=location.origin+'/admin/#reset='+res.resetToken+'&email='+encodeURIComponent(res.email);
+        linkOut.textContent='One-time reset link (email: '+res.emailStatus+'): '+url;
+        notice.textContent='Password reset link generated for '+row.email+'.';
+      },'secondary'));
+      if(row.resetRequestedAt)acts.push(button('Dismiss request',async()=>{await api('staff',{action:'dismiss-reset',email:row.email});await open('team')},'secondary'));
+      if(['Active','Invited'].includes(row.status))acts.push(button('Revoke access',async()=>{if(confirmAccess(row.email)){await api('staff',{action:'revoke',email:row.email});await open('team')}}));
+      if(acts.length)buttons(item,...acts);
+      roster.append(item);
+    }
   }
   function confirmAccess(email){return window.confirm('Revoke studio access for '+email+'?')}
   const stages=['Received','In review','Contacted','Scheduled','Completed','Cancelled','Closed'];
