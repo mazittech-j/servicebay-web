@@ -1,5 +1,6 @@
 import {event} from './insights.mjs';
 import {reject,hash} from './accounts.mjs';
+import {resolveOwnerEmail} from './shield.mjs';
 const encode=b=>btoa(String.fromCharCode(...new Uint8Array(b)));
 const decode=s=>Uint8Array.from(atob(s),ch=>ch.charCodeAt(0));
 const encoder=new TextEncoder();
@@ -27,7 +28,8 @@ export async function mailSettings(db,env,input){
   }
   const config=await settings(db,env);
   const row=await db.get('security/mail'),test=(await db.get('security/mail-test')).data;
-  return {...config,lastTest:test?.revision===row.version&&test.from===config.from?{status:test.status,at:test.at}:null};
+  const fallbackRecipient=await resolveOwnerEmail(db,env);
+  return {...config,fallbackRecipient,envStatus:{hasResendKey:!!(row.data?.secret||env.RESEND_API_KEY),hasFromEmail:!!config.from,hasMailKey:!!env.MAIL_SETTINGS_KEY},lastTest:test?.revision===row.version&&test.from===config.from?{status:test.status,at:test.at}:null};
 }
 async function mutate(db,key,transform,activity){
   for(let i=0;i<5;i++){
@@ -75,10 +77,11 @@ export function emailStatus(row){
 export async function testSender(db,env,user){
   const row=await db.get('security/mail'),config=await settings(db,env,true);
   if(!config.configured)reject('Save a sender address and sending key first.',409);
-  if(!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(user.email||''))reject('Set a contact email in My account before sending a test.');
+  const recipient=(user.email&&/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(user.email))?user.email:await resolveOwnerEmail(db,env);
+  if(!recipient)reject('Set a contact email in My account before sending a test.');
   await db.limit('rate/receipt-test',4,10);
   const old=await db.get('security/mail-test'),at=new Date().toISOString();
-  const payload={from:'ServiceBay <'+config.from+'>',to:[user.email],subject:'ServiceBay receipt email test',text:'Your ServiceBay studio requested this test of the receipt email sender. No customer request was created.'};
+  const payload={from:'ServiceBay <'+config.from+'>',to:[recipient],subject:'ServiceBay receipt email test',text:'Your ServiceBay studio requested this test of the receipt email sender. No customer request was created.'};
   let status='Unconfirmed';
   try{
     const response=await fetch('https://api.resend.com/emails',{method:'POST',redirect:'error',signal:AbortSignal.timeout(8000),headers:{Authorization:'Bearer '+config.key,'Content-Type':'application/json','Idempotency-Key':'sb-test-'+await hash(JSON.stringify(payload)+row.version+Math.floor(Date.now()/60000))},body:JSON.stringify(payload)});

@@ -24,17 +24,20 @@ export function detectHoneypot(input){
 }
 
 export async function resolveOwnerEmail(db,env){
-  const [shield,nodeOwner,siteOwner]=await Promise.all([
+  const [shield,nodeOwner,siteOwner,siteSettings]=await Promise.all([
     db.get('security/shield'),
     db.get('security/node-owner'),
-    db.get('security/owner')
+    db.get('security/owner'),
+    db.get('settings')
   ]);
   const candidates=[
     shield.data?.alertEmail,
     nodeOwner.data?.email,
     siteOwner.data?.email,
     env.ADMIN_EMAIL,
-    env.SERVICEBAY_OWNER_EMAIL
+    env.SERVICEBAY_OWNER_EMAIL,
+    siteSettings.data?.live?.email,
+    siteSettings.data?.draft?.email
   ];
   return candidates.find(v=>typeof v==='string'&&/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(v.trim()))?.trim()||'';
 }
@@ -61,7 +64,7 @@ async function appendLog(db,entry,activity){
   }
 }
 
-export async function recordIncident({db,env,ip,reason,target='',detail='',immediateBlock=false,threshold=5}){
+export async function recordIncident({db,env,ip,reason,target='',detail='',immediateBlock=false,threshold=3}){
   const cfg=await getShieldConfig(db);
   if(!cfg.active)return {blocked:false,alerted:false};
   const ipStr=String(ip||'shared'),ipHash=await digest(ipStr);
@@ -85,15 +88,12 @@ export async function recordIncident({db,env,ip,reason,target='',detail='',immed
 
   const at=new Date(now).toISOString();
   const maskedIp=ipStr==='shared'?'unknown':ipStr.slice(0,45);
-  const summary=[reason,target?'Target: '+target:'',detail].filter(Boolean).join(' · ');
-  await appendLog(db,{at,reason,target:target||'',ip:maskedIp,detail:detail||'',blockedUntil:new Date(until).toISOString()},event('Security',reason,summary));
 
-  // Cooldown: max 1 email per IP + reason every 15 minutes
+  // Cooldown: max 1 email per IP + reason every 15 minutes (only recorded when Accepted)
   const alertKey='shield/alert/'+await digest(ipHash+':'+reason);
   const alertRow=await db.get(alertKey);
   let mailStatus='Cooldown';
   if(!alertRow.data||now-(alertRow.data.at||0)>windowMs){
-    await db.save(alertKey,{at:now},alertRow.version);
     const ownerEmail=await resolveOwnerEmail(db,env);
     if(ownerEmail){
       const text=[
@@ -110,17 +110,46 @@ export async function recordIncident({db,env,ip,reason,target='',detail='',immed
         '',
         'You can review security events in Website Studio > Security shield.'
       ].filter(Boolean).join('\n');
-      mailStatus=await sendSystemEmail(db,env,{
-        to:ownerEmail,
-        subject:'[ServiceBay Security Shield] '+reason,
-        text,
-        idempotencyKey:'sb-shield-'+alertKey.slice(-16)+'-'+Math.floor(now/windowMs)
-      });
+      try{
+        mailStatus=await sendSystemEmail(db,env,{
+          to:ownerEmail,
+          subject:'[ServiceBay Security Shield] '+reason,
+          text,
+          idempotencyKey:'sb-shield-'+alertKey.slice(-16)+'-'+Math.floor(now/windowMs)
+        });
+      }catch(err){
+        mailStatus=err?.message||'Send error';
+      }
+      if(mailStatus==='Accepted'){
+        await db.save(alertKey,{at:now},alertRow.version);
+      }
     }else{
       mailStatus='No owner email configured';
     }
   }
+  const summary=[reason,target?'Target: '+target:'',detail,'Email: '+mailStatus].filter(Boolean).join(' · ');
+  await appendLog(db,{at,reason,target:target||'',ip:maskedIp,detail:[detail,'Alert email: '+mailStatus].filter(Boolean).join(' · '),blockedUntil:new Date(until).toISOString()},event('Security',reason,summary));
   return {blocked:true,alerted:mailStatus==='Accepted',mailStatus};
+}
+
+export async function clearShieldBlocks(db,env,ip){
+  if(ip){
+    const ipHash=await digest(String(ip));
+    await db.remove('shield/block/'+ipHash);
+    await db.remove('shield/fail/'+ipHash);
+  }
+  const logRow=await db.get('security/shield-log');
+  for(const item of (logRow.data?.items||[])){
+    if(item.ip&&item.ip!=='studio'&&item.ip!=='unknown'){
+      const h=await digest(item.ip);
+      await db.remove('shield/block/'+h);
+      await db.remove('shield/fail/'+h);
+    }
+  }
+  await db.remove('shield/block/'+await digest('shared'));
+  await db.remove('shield/fail/'+await digest('shared'));
+  await appendLog(db,{at:new Date().toISOString(),reason:'Cleared active IP blocks',target:'',ip:'studio',detail:'All temporary IP blocks cleared by owner',blockedUntil:''},event('Security','Cleared active IP blocks'));
+  return shieldState(db,env);
 }
 
 export async function shieldState(db,env){

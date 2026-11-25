@@ -24,7 +24,13 @@ async function checkPassword(value,stored){
 function cookieName(scope,secure){return (secure?'__Host-':'')+'servicebay_'+scope}
 function ticket(req,scope){const name=cookieName(scope,new URL(req.url).protocol==='https:');return (req.headers.get('cookie')||'').split(';').map(x=>x.trim()).find(x=>x.startsWith(name+'='))?.slice(name.length+1)}
 function cookie(req,scope,token,life){const secure=new URL(req.url).protocol==='https:';return cookieName(scope,secure)+'='+token+'; Path=/; HttpOnly; SameSite=Lax; Max-Age='+life+(secure?'; Secure':'')}
-const safeUser = u=>({id:u.id,name:u.name,email:u.email,username:u.username||'',role:u.role,revision:u.authRevision||0});
+export const ALL_STAFF_PERMS=['pages','overview','requests','company','pricing','connections','activity'];
+export function cleanPermissions(perms){
+  if(!Array.isArray(perms))return ['pages'];
+  const valid=perms.filter(p=>ALL_STAFF_PERMS.includes(p));
+  return valid.length?[...new Set(valid)]:['pages'];
+}
+const safeUser = u=>({id:u.id,name:u.name,email:u.email,username:u.username||'',role:u.role,revision:u.authRevision||0,permissions:u.role==='owner'?ALL_STAFF_PERMS:cleanPermissions(u.permissions)});
 function siteId(req){return req.headers.get('oai-authenticated-user-id')||''}
 function siteMail(req){return (req.headers.get('oai-authenticated-user-email')||'').toLowerCase()}
 export function isSiteOwner(req,env,platform){return platform.kind==='sites'&&!!siteId(req)&&!!env.SERVICEBAY_OWNER_EMAIL&&siteMail(req)===env.SERVICEBAY_OWNER_EMAIL.toLowerCase()}
@@ -52,6 +58,7 @@ export async function session(req,db,scope,platform,env){
     }
     if((s.user.revision||0)!==(current?.authRevision||0))return null;
     if(now-s.last>60000){try{await db.save(key,{...s,last:now},row.version)}catch(e){if(e.status!==409)throw e}}
+    return {...s.user,permissions:s.user.role==='owner'?ALL_STAFF_PERMS:cleanPermissions(current?.permissions??s.user.permissions)};
   }
   return s.user;
 }
@@ -82,7 +89,7 @@ export async function authAction({req,db,scope,action,env,platform,input}){
   if(action==='activate'){
     const address=email(input.email),key='staff/'+await hash(address),row=await db.get(key),u=row.data;
     if(!u||u.active||!u.invite||u.until<Date.now()||!same(await hash(String(input.invite||'')),u.invite)||(platform.kind==='sites'&&siteMail(req)!==address))reject('This invitation is unavailable for this account.',403);
-    const updated={id:u.id,name:u.name,email:address,role:'editor',active:true,auth:await passwordRecord(input.password)};
+    const updated={id:u.id,name:u.name,email:address,role:'editor',active:true,permissions:cleanPermissions(u.permissions),auth:await passwordRecord(input.password)};
     await db.save(key,updated,row.version,event('Team','Activated editor account',updated.name,updated.name));return establish(req,db,scope,updated,binding);
   }
   if(action==='forgot'){
@@ -125,7 +132,7 @@ export async function inviteEditor(db,input){
   const address=email(input.email),name=String(input.name||'').trim();
   if(!name||name.length>80)reject('Enter the editor’s name.');
   const key='staff/'+await hash(address),row=await db.get(key);if(row.data?.active)reject('This editor already has an active account.',409);
-  const token=random(32);await db.save(key,{id:random(16),email:address,name,role:'editor',active:false,invite:await hash(token),until:Date.now()+86400000},row.version,event('Team','Invited editor',name));return token;
+  const token=random(32);await db.save(key,{id:random(16),email:address,name,role:'editor',active:false,permissions:cleanPermissions(input.permissions),invite:await hash(token),until:Date.now()+86400000},row.version,event('Team','Invited editor',name));return token;
 }
 
 function ownerKey(platform){return platform.kind==='sites'?'security/owner':'security/node-owner'}
@@ -164,7 +171,15 @@ export async function createEditor(db,input,env,platform){
   if(row.data?.active)reject('An active account already uses this email.',409);
   const id=row.data?.id||random(16),auth=await passwordRecord(input.password);
   await reserveLogin(db,login,id,address);
-  await db.save(key,{id,name,email:address,username:login,auth,role:'editor',active:true,authRevision:(row.data?.authRevision||0)+1},row.version,event('Team','Created editor account',name));
+  const permissions=cleanPermissions(input.permissions);
+  await db.save(key,{id,name,email:address,username:login,auth,role:'editor',active:true,permissions,authRevision:(row.data?.authRevision||0)+1},row.version,event('Team','Created editor account',name));
+}
+export async function updateStaffPermissions({db,email:targetEmail,permissions}){
+  const address=email(targetEmail),key='staff/'+await hash(address),row=await db.get(key),u=row.data;
+  if(!u)reject('Account not found.',404);
+  const nextPerms=cleanPermissions(permissions);
+  await db.save(key,{...u,permissions:nextPerms},row.version,event('Team','Updated editor permissions',u.name+' · '+nextPerms.join(', ')));
+  return {ok:true,permissions:nextPerms};
 }
 export async function updateOwner(req,db,env,platform,input){
   await db.limit('rate/profile/'+await hash(platform.ip||'shared'),12,10);

@@ -291,9 +291,28 @@ test('Owner login, requestOrigin CSRF, Google Authenticator 2FA, team password r
     assert.equal(probe.status,403);
     assert.ok(alerts.some(m=>m.subject.includes('Attack probe blocked')));
 
-    // Shield state visible to owner
+    // Shield state visible to owner & clear-blocks works
     const sh=await (await call('/api/admin/shield',{config:nodeCfg,ctx:nodeCtx,headers:{Cookie:nodeCookie}})).json();
     assert.equal(sh.active,true);assert.ok(sh.events.length>=2);
+    const cleared=await call('/api/admin/shield',{config:nodeCfg,ctx:nodeCtx,headers:{origin:altOrigin,Cookie:nodeCookie},post:{action:'clear-blocks'}});
+    assert.equal(cleared.status,200);
+    const afterClear=await call('/api/studio-auth/login',{config:nodeCfg,ctx:botCtx,headers:{origin:altOrigin},post:{email:'owner',password:'wrong-pass'}});
+    assert.equal(afterClear.status,401);
+
+    // Granular team permissions
+    const permEmail='perm-editor@example.test';
+    assert.equal((await call('/api/admin/staff',{config:nodeCfg,ctx:nodeCtx,headers:{origin:altOrigin,Cookie:nodeCookie},post:{action:'create',name:'Perm Editor',username:'perm-editor',email:permEmail,password:'editor-strong-pass-2026',permissions:['pages','requests']}})).status,201);
+    const edLogin=await call('/api/studio-auth/login',{config:nodeCfg,ctx:nodeCtx,headers:{origin:altOrigin},post:{email:'perm-editor',password:'editor-strong-pass-2026'}});
+    assert.equal(edLogin.status,200);
+    const edCookie=cookieOf(edLogin);
+    assert.equal((await call('/api/admin/inbox',{config:nodeCfg,ctx:nodeCtx,headers:{Cookie:edCookie}})).status,200);
+    assert.equal((await call('/api/admin/overview',{config:nodeCfg,ctx:nodeCtx,headers:{Cookie:edCookie}})).status,403);
+    assert.equal((await call('/api/admin/staff',{config:nodeCfg,ctx:nodeCtx,headers:{Cookie:edCookie}})).status,403);
+    // Update permissions dynamically to overview
+    assert.equal((await call('/api/admin/staff',{config:nodeCfg,ctx:nodeCtx,headers:{origin:altOrigin,Cookie:nodeCookie},post:{action:'permissions',email:permEmail,permissions:['pages','overview']}})).status,200);
+    assert.equal((await call('/api/admin/overview',{config:nodeCfg,ctx:nodeCtx,headers:{Cookie:edCookie}})).status,200);
+    assert.equal((await call('/api/admin/inbox',{config:nodeCfg,ctx:nodeCtx,headers:{Cookie:edCookie}})).status,403);
   }finally{globalThis.fetch=original}
 });
+
 

@@ -3,8 +3,8 @@ import {event,activityGroups,statuses,reportingPeriod,serviceReport} from './ins
 import {assets,routes} from './generated.mjs';
 import {records} from './store.mjs';
 import {renderPage,cleanSettings,cleanPage,EMPTY_PAGE,defaults,fonts,fail,txt} from './content.mjs';
-import {authAction, session, isSiteOwner, inviteEditor, hash, createEditor, updateOwner, nodeOwnerLogin, quoteCustomer, manage2fa, issueStaffReset, dismissStaffReset} from './accounts.mjs';
-import {detectProbe, detectHoneypot, isIpBlocked, recordIncident, shieldState, updateShield, testShieldAlert} from './shield.mjs';
+import {authAction, session, isSiteOwner, inviteEditor, hash, createEditor, updateOwner, nodeOwnerLogin, quoteCustomer, manage2fa, issueStaffReset, dismissStaffReset, updateStaffPermissions} from './accounts.mjs';
+import {detectProbe, detectHoneypot, isIpBlocked, recordIncident, shieldState, updateShield, testShieldAlert, clearShieldBlocks} from './shield.mjs';
 import {mailSettings,sendReceipt,emailStatus,testSender} from './mail.mjs';
 import {admin,portal,studioLogin} from './views.mjs';
 import {createServiceHubClient} from './erp.mjs';
@@ -101,8 +101,19 @@ export async function serve(request,env,store,platform){
       fail('Sign in to the website studio to continue.',401);
     }
     if(studioPage)return html(admin(studioUser));
-    if(studioUser?.role==='editor'&&path.startsWith('/api/admin/')&&
-       !(path==='/api/admin/state'||path==='/api/admin/media'||path==='/api/admin/2fa'||(path==='/api/admin/content'&&u.searchParams.get('scope')!=='site')))fail('This action requires the website owner.',403);
+    if(studioUser?.role==='editor'&&path.startsWith('/api/admin/')){
+      const perms=new Set(studioUser.permissions||['pages']);
+      const allowed=
+        path==='/api/admin/state'||
+        path==='/api/admin/2fa'||
+        (path==='/api/admin/media'&&(perms.has('pages')||perms.has('company')))||
+        (path==='/api/admin/content'&&(u.searchParams.get('scope')==='site'?(perms.has('company')||perms.has('pricing')||perms.has('connections')):perms.has('pages')))||
+        ((path==='/api/admin/overview'||path==='/api/admin/service-report')&&(perms.has('overview')||perms.has('pricing')))||
+        ((path==='/api/admin/inbox'||path==='/api/admin/request')&&perms.has('requests'))||
+        ((path==='/api/admin/mail'||path==='/api/admin/mail-test')&&perms.has('connections'))||
+        (path==='/api/admin/activity'&&perms.has('activity'));
+      if(!allowed)fail('This action requires the website owner.',403);
+    }
     if(path==='/api/admin/2fa'){
       if(method==='GET')return json(await manage2fa({db:store,platform,user:studioUser,input:{action:'status'}}));
       if(method==='POST')return json(await manage2fa({db:store,platform,user:studioUser,input:await body(request,1024)}));
@@ -112,6 +123,7 @@ export async function serve(request,env,store,platform){
       if(method==='POST'){
         const input=await body(request,1024);
         if(input.action==='test')return json(await testShieldAlert(store,env));
+        if(input.action==='clear-blocks')return json(await clearShieldBlocks(store,env,platform.ip));
         return json(await updateShield(store,env,input));
       }
     }
@@ -123,7 +135,7 @@ export async function serve(request,env,store,platform){
     if(path==='/api/admin/mail')return json(await mailSettings(store,env,method==='POST'?await body(request,2048):null));
     if(path==='/api/admin/staff'){
       if(method==='GET')return json({items:await store.staff()});
-      if(method==='POST'){const input=await body(request,2048);if(input.action==='create'){await createEditor(store,input,env,platform);return json({ok:true},201)}if(input.action==='reset-link'){return json(await issueStaffReset({db:store,env,email:txt(input.email,150).toLowerCase(),origin:platform.requestOrigin||u.origin}))}if(input.action==='dismiss-reset'){return json(await dismissStaffReset({db:store,email:txt(input.email,150).toLowerCase()}))}if(input.action==='revoke'){const key='staff/'+await hash(txt(input.email,150).toLowerCase());const old=await store.get(key);if(!old.data)fail('Account not found.',404);await store.save(key,{...old.data,active:false,invite:null,until:0,authRevision:(old.data.authRevision||0)+1},old.version,event('Team','Revoked editor access',old.data.name));return json({ok:true})}
+      if(method==='POST'){const input=await body(request,2048);if(input.action==='create'){await createEditor(store,input,env,platform);return json({ok:true},201)}if(input.action==='permissions'){return json(await updateStaffPermissions({db:store,email:txt(input.email,150).toLowerCase(),permissions:input.permissions}))}if(input.action==='reset-link'){return json(await issueStaffReset({db:store,env,email:txt(input.email,150).toLowerCase(),origin:platform.requestOrigin||u.origin}))}if(input.action==='dismiss-reset'){return json(await dismissStaffReset({db:store,email:txt(input.email,150).toLowerCase()}))}if(input.action==='revoke'){const key='staff/'+await hash(txt(input.email,150).toLowerCase());const old=await store.get(key);if(!old.data)fail('Account not found.',404);await store.save(key,{...old.data,active:false,invite:null,until:0,authRevision:(old.data.authRevision||0)+1},old.version,event('Team','Revoked editor access',old.data.name));return json({ok:true})}
         return json({invite:await inviteEditor(store,input),email:txt(input.email,150).toLowerCase()})}
     }
     if(path==='/api/admin/activity'&&method==='GET'){
@@ -189,7 +201,14 @@ export async function serve(request,env,store,platform){
       if(row.data.status!==x.status)await store.save(x.key,{...row.data,status:x.status,history:[...(row.data.history||[{status:'Received',at:row.data.created}]),{status:x.status,at:new Date().toISOString()}].slice(-40)},row.version,event('Quotes','Updated quote status',(row.data.service||'Service quote')+' · '+row.data.status+' → '+x.status));return json({ok:true});
     }
     if(path.startsWith('/api/portal/')&&method==='POST'){
-      const x=await body(request,12000),code=txt(x.code,70).toUpperCase(),primary=await requestKey(code);
+      const blockedMins=await isIpBlocked(store,platform.ip);
+      if(blockedMins>0)return json({error:'Security shield active. Try again in '+blockedMins+' minute'+(blockedMins===1?'':'s')+'.'},429);
+      const x=await body(request,12000);
+      if(detectHoneypot(x)){
+        await recordIncident({db:store,env,ip:platform.ip,reason:'Bot spam blocked on quote/portal form',target:path,detail:'Honeypot field triggered',immediateBlock:true});
+        return json({error:'Request blocked by security shield.'},403);
+      }
+      const code=txt(x.code,70).toUpperCase(),primary=await requestKey(code);
       const key=path==='/api/portal/requests'?primary:((await store.get('receipt/'+await hash(code))).data?.key||primary);
       if(path==='/api/portal/claim'){
         const user=await session(request,store,'customer',platform,env);if(!user)fail('Sign in to add this receipt.',401);

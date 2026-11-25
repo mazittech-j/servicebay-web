@@ -87,10 +87,15 @@
     }
     const c=card(panel,'Measurement & verification');c.append(el('p','Measurement starts after a visitor allows it. Leave an ID empty to disable that integration.'));const g=el('div',undefined,'fields');c.append(g);
     for(const [key,label] of Object.entries({ga:'Google Analytics 4 measurement ID',ads:'Google Ads tag ID',pixel:'Meta Pixel ID',verification:'Search Console verification token'}))bind(field(g,label,data[key]),key);actions(c);
-    const conn=card(panel,'ServiceHub ERP & payments'),i=cfg.integrations;conn.append(el('p','Website database: '+cfg.storage),el('p','ERP enquiry delivery: '+(i.canSync?'Configured':'Awaiting API configuration')),el('p','Configure SERVICEHUB_API_URL and SERVICEHUB_API_KEY on your hosting provider. ServiceHub handles customer accounts and Stripe payments.'));
+    const conn=card(panel,'ServiceHub ERP & payments'),i=cfg.integrations;
+    const erpChips=el('div',undefined,'env-list');
+    erpChips.append(el('span','Database: '+cfg.storage,'status-chip'),el('span','ERP sync: '+(i.canSync?'Active':'Not configured'),'status-chip'));
+    conn.append(erpChips,el('p','Configure SERVICEHUB_API_URL and SERVICEHUB_API_KEY on your hosting provider. ServiceHub handles customer accounts and Stripe payments.'));
     await emailConfig(ticket);if(ticket!==epoch)return;
-    const transfer=card(panel,'Move to another host');transfer.append(el('p','Download your page drafts, published content, uploaded images and customer requests for the database import. The file contains customer contact details. Keep it private.'));
-    buttons(transfer,button('Download database export',async()=>{const rows=[];let cursor='';do{const v=await api('export?cursor='+encodeURIComponent(cursor));rows.push(...v.rows);cursor=v.next}while(cursor);const blob=new Blob([JSON.stringify({format:'servicebay-v1',created:new Date().toISOString(),rows})],{type:'application/json'});const url=URL.createObjectURL(blob),a=el('a');a.href=url;a.download='servicebay-private-backup.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),10000);notice.textContent='Database export downloaded.'}));
+    if(cfg.user.role==='owner'){
+      const transfer=card(panel,'Move to another host');transfer.append(el('p','Download your page drafts, published content, uploaded images and customer requests for the database import. The file contains customer contact details. Keep it private.'));
+      buttons(transfer,button('Download database export',async()=>{const rows=[];let cursor='';do{const v=await api('export?cursor='+encodeURIComponent(cursor));rows.push(...v.rows);cursor=v.next}while(cursor);const blob=new Blob([JSON.stringify({format:'servicebay-v1',created:new Date().toISOString(),rows})],{type:'application/json'});const url=URL.createObjectURL(blob),a=el('a');a.href=url;a.download='servicebay-private-backup.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),10000);notice.textContent='Database export downloaded.'}));
+    }
     if(i.portal){const a=el('a','Open ServiceHub customer login');a.href=i.portal;conn.append(a);for(const [label,key] of [['Stripe test webhook','stripeTest'],['Stripe live webhook','stripeLive']]){const f=field(conn,label,i[key]);f.readOnly=true}}
   }
   const stamp=value=>new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Dubai',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}).format(new Date(value));
@@ -183,19 +188,29 @@
   }
   async function emailConfig(ticket){
     const x=await api('mail');if(ticket!==epoch)return;
-    const c=card(panel,'Receipt email'),status=el('p',x.configured?'Sender configured. Check each quote for its email status.':'Email delivery is awaiting a verified sender. Quotes are saved in the customer portal.');
+    const c=card(panel,'Receipt & alert email (Resend)'),status=el('p',x.configured?'Sender configured. Receipts and security alerts use this sender.':'Email delivery is awaiting a verified sender. Quotes are saved in the customer portal.');
     c.append(status);
+    if(x.envStatus){
+      const chips=el('div',undefined,'env-list');
+      chips.append(
+        el('span','API key: '+(x.envStatus.hasResendKey?'Set':'Missing'),'status-chip'),
+        el('span','From email: '+(x.envStatus.hasFromEmail?x.from:'Missing'),'status-chip'),
+        el('span','In-app encryption: '+(x.envStatus.hasMailKey?'Enabled':'Env-only'),'status-chip')
+      );
+      c.append(chips);
+    }
     const info=el('p',undefined,'mail-result');c.append(info);
     function result(last){info.textContent=last?'Last test · '+last.status+' · '+stamp(last.at)+(last.status==='Accepted'?' · Check the recipient mailbox for delivery.':''):''}
     result(x.lastTest);
-    const test=button('Send test to my email',async()=>{const r=await api('mail-test',{});result(r)});
+    const recipient=(cfg.user.email&&cfg.user.email.includes('@'))?cfg.user.email:(x.fallbackRecipient||'');
+    const test=button('Send test email',async()=>{const r=await api('mail-test',{});result(r)});
     const host=el('div',undefined,'buttons');
     if(x.editable){
       const g=el('div',undefined,'fields');c.append(g);
       const from=field(g,'Verified sender email',x.from,'email'),key=secret(g,'Resend sending API key',x.configured?'Leave blank to keep the current key':'re_…');
-      host.append(button('Save email sender',async()=>{const saved=await api('mail',{from:from.value,key:key.value});key.value='';dirty=false;x.configured=saved.configured;test.disabled=!saved.configured||!cfg.user.email?.includes('@');result(saved.lastTest);status.textContent='Sender saved. Send a test to check provider acceptance.'},'primary'));
-    }else c.append(el('p','Configure RESEND_API_KEY and RECEIPT_FROM_EMAIL on this host.'));
-    test.disabled=!x.configured||!cfg.user.email?.includes('@');host.append(test);c.append(host,el('p',cfg.user.email?.includes('@')?'Test recipient · '+cfg.user.email:'Set your email in My account to receive a test.','stamp'));
+      host.append(button('Save email sender',async()=>{const saved=await api('mail',{from:from.value,key:key.value});key.value='';dirty=false;x.configured=saved.configured;const rec=(cfg.user.email&&cfg.user.email.includes('@'))?cfg.user.email:(saved.fallbackRecipient||'');test.disabled=!saved.configured||!rec;result(saved.lastTest);status.textContent='Sender saved. Send a test to check provider acceptance.'},'primary'));
+    }else c.append(el('p','Configure RESEND_API_KEY and RECEIPT_FROM_EMAIL on your hosting provider (or add MAIL_SETTINGS_KEY to edit here).'));
+    test.disabled=!x.configured||!recipient;host.append(test);c.append(host,el('p',recipient?'Test recipient · '+recipient:'Set your email in My account or Brand & company to receive a test.','stamp'));
   }
   async function profile(ticket){
     const c=card(panel,'Studio sign-in details');c.append(el('p','Update your studio login and confirm with your current password. Changes sign out other studio sessions.'));
@@ -260,6 +275,10 @@
       const res=await api('shield',{action:'test'});
       notice.textContent='Test security alert to '+res.to+': '+res.status+'.';
       await open('security');
+    },'secondary'),button('Clear active IP blocks',async()=>{
+      await api('shield',{action:'clear-blocks'});
+      notice.textContent='All temporary IP blocks cleared.';
+      await open('security');
     },'secondary'));
     await twoFactorCard(panel,ticket);
     const logCard=card(panel,'Recent blocked threats & security events');
@@ -271,13 +290,25 @@
       logCard.append(row);
     }
   }
+  const permDefs=[['pages','Page editor'],['overview','Overview & analytics'],['requests','Quote requests'],['company','Brand & company'],['pricing','Services & AMC'],['connections','Integrations'],['activity','Activity log']];
+  function permPicker(parent,selected=['pages']){
+    const set=new Set(selected),wrap=el('div',undefined,'perm-grid'),boxes=new Map();
+    for(const [key,label] of permDefs){
+      const lbl=el('label',undefined,'check'),cb=el('input');cb.type='checkbox';cb.checked=set.has(key);
+      lbl.append(cb,document.createTextNode(label));wrap.append(lbl);boxes.set(key,cb);
+    }
+    parent.append(wrap);
+    return ()=>{const out=[];for(const [k,cb] of boxes)if(cb.checked)out.push(k);return out.length?out:['pages']};
+  }
   async function team(ticket){
     const r=await api('staff');if(ticket!==epoch)return;
     const split=el('div',undefined,'team-layout');panel.append(split);
-    const create=card(split,'Create a team account');create.append(el('p','Create an editor login for pages and images. On a private site the editor also needs site access for this work email.'));
+    const create=card(split,'Create a team account');create.append(el('p','Create a team login and choose which studio sections they can access.'));
     const grid=el('div',undefined,'fields');create.append(grid);
     const name=field(grid,'Full name',''),login=field(grid,'Username',''),email=field(grid,'Work email','','email'),pw=secret(grid,'Password','At least 15 characters'),confirm=secret(grid,'Confirm password');
-    buttons(create,button('Create account',async()=>{if(pw.value!==confirm.value)throw Error('The passwords do not match.');await api('staff',{action:'create',name:name.value,username:login.value,email:email.value,password:pw.value});await open('team');notice.textContent='Editor account created. The editor can sign in with the username or work email.'},'primary'));
+    create.append(el('p','Allowed sections:','stamp'));
+    const readCreatePerms=permPicker(create,['pages']);
+    buttons(create,button('Create account',async()=>{if(pw.value!==confirm.value)throw Error('The passwords do not match.');await api('staff',{action:'create',name:name.value,username:login.value,email:email.value,password:pw.value,permissions:readCreatePerms()});await open('team');notice.textContent='Team account created with selected permissions.'},'primary'));
     const roster=card(split,'Team directory');if(!r.items.length)roster.append(el('p','Your team accounts will appear here.'));
     for(const row of r.items){
       const item=el('div',undefined,'panel-row'),h=el('div',undefined,'section-head'),chips=el('div',undefined,'section-head');
@@ -286,9 +317,16 @@
       if(row.resetRequestedAt)chips.append(el('span','Reset requested','stage-pill'));
       h.append(el('strong',row.name),chips);
       item.append(h,el('p',[row.username,row.email].filter(Boolean).join(' · ')));
+      const pChips=el('div',undefined,'perm-chips');
+      for(const p of (row.permissions||['pages'])){const lbl=permDefs.find(([k])=>k===p)?.[1]||p;pChips.append(el('span',lbl,'perm-chip'))}
+      item.append(pChips);
       if(row.resetRequestedAt){
         item.append(el('p','Password reset requested on '+stamp(row.resetRequestedAt)+(row.resetNote?' — "'+row.resetNote+'"':''),'hint'));
       }
+      const permDetails=el('details');permDetails.append(el('summary','Edit section access'));
+      const readRowPerms=permPicker(permDetails,row.permissions||['pages']);
+      buttons(permDetails,button('Save permissions',async()=>{await api('staff',{action:'permissions',email:row.email,permissions:readRowPerms()});await open('team');notice.textContent='Permissions updated for '+row.name+'.'},'primary'));
+      item.append(permDetails);
       const linkOut=el('p',undefined,'stamp');item.append(linkOut);
       const acts=[];
       if(row.status==='Active')acts.push(button('Send reset link',async()=>{
@@ -315,6 +353,14 @@
     const filter=field(tools,'Status','All statuses','text',['All statuses',...stages]);
     const apply=el('button','Search','btn secondary');apply.type='submit';tools.append(apply);tools.oninput=e=>e.stopPropagation();
     let query='',stage='',cursor=null,selected='',items=[],revision=0;
+    const csvBtn=button('Export CSV',()=>{
+      const escCsv=v=>'"'+String(v??'').replace(/"/g,'""')+'"';
+      const head=['Created','Name','Email','Phone','Service','Area','Property','Status','Receipt'];
+      const lines=[head.join(','),...items.map(r=>[r.created,r.name,r.email,r.phone,r.service||'Service quote',r.area,r.property,r.status,r.receipt].map(escCsv).join(','))];
+      const blob=new Blob([lines.join('\n')],{type:'text/csv;charset=utf-8'}),url=URL.createObjectURL(blob),a=el('a');
+      a.href=url;a.download='servicebay-requests.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),10000);
+    },'secondary');
+    queue.insertBefore(csvBtn,list);
     tools.onsubmit=e=>{e.preventDefault();query=search.value.trim();stage=filter.value==='All statuses'?'':filter.value;refresh().catch(e=>notice.textContent=e.message)};filter.onchange=()=>tools.requestSubmit();
     async function refresh(more=false){
       const seq=++revision,params=new URLSearchParams({q:query,status:stage});if(more&&cursor)params.set('cursor',cursor);
