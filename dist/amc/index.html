@@ -115,8 +115,8 @@
         <div class="fields">
           <label>Full name <span aria-hidden="true">*</span><input name="name" autocomplete="name" required pattern=".*\S.*" maxlength="80" placeholder="Your name"></label>
           <label>Mobile <span aria-hidden="true">*</span><input name="mobile" type="tel" autocomplete="tel" required maxlength="24" minlength="7" pattern="[+0-9\(\) .\-]+" title="Use digits and an optional country code" placeholder="+971 …"></label>
-          <label>Email for your receipt<input name="email" type="email" autocomplete="email" maxlength="150" placeholder="you@example.com"></label>
-          <label data-quote-password>Customer portal password<input name="portalPassword" type="password" maxlength="128" autocomplete="new-password" aria-label="Customer portal password" placeholder="New or existing password"></label>
+          <label>Email for your receipt <span aria-hidden="true">*</span><input name="email" type="email" autocomplete="email" required maxlength="150" placeholder="you@example.com"></label>
+          <input name="website" tabindex="-1" autocomplete="off" aria-hidden="true" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none">
           <label>Service <span aria-hidden="true">*</span><select name="service" required><option value="" disabled>Select a service</option><option value="hvac">AC &amp; HVAC</option><option value="plumbing">Plumbing</option><option value="electrical">Electrical</option><option value="painting">Painting</option><option value="carpentry">Carpentry</option><option value="handyman">Handyman</option><option value="ceilings">Ceilings &amp; partitions</option><option value="flooring">Tile &amp; flooring</option><option value="refrigeration">Cold-room refrigeration</option><option value="amc" selected>AMC enquiry</option><option value="other">Other</option></select></label>
           <label>Property type<select name="property"><option value="">Select property</option><option>Apartment</option><option>Villa</option><option>Office</option><option>Retail</option><option>Restaurant</option><option>Warehouse</option><option>Other</option></select></label>
           <div class="amc-form-options field-wide" data-amc-options>
@@ -130,7 +130,7 @@
         </div>
         <div class="quote-submit-actions"><button class="button button-primary form-submit" type="submit">Send quote request</button><button class="button button-outline" type="submit" data-prepare-whatsapp>Prepare WhatsApp message</button></div>
       </fieldset>
-      <div class="quote-receipt" role="status" aria-live="polite"></div><p class="form-note" data-account-note>Sending your first quote creates a customer account. Choose a password of at least 15 characters. Returning customers can use their existing password or <a href="/portal/?return=quote">sign in first</a>. <a href="/privacy-policy/">Privacy Policy</a></p>
+      <div class="quote-receipt" role="status" aria-live="polite"></div><p class="form-note" data-account-note>Your receipt number will be sent to your email. Track your request anytime in the <a href="/portal/">Customer Portal</a>. <a href="/privacy-policy/">Privacy Policy</a></p>
       <noscript><p>Use <a href="https://wa.me/971562014647">WhatsApp</a> or <a href="tel:+971562014647">call 056 201 4647</a> to make an enquiry.</p></noscript>
       <div class="message-review" hidden>
         <h3 tabindex="-1">Your WhatsApp message</h3>
@@ -205,8 +205,8 @@
         <div class="fields">
           <label>Full name <span aria-hidden="true">*</span><input name="name" autocomplete="name" required pattern=".*\S.*" maxlength="80" placeholder="Your name" autofocus></label>
           <label>Mobile <span aria-hidden="true">*</span><input name="mobile" type="tel" autocomplete="tel" required maxlength="24" minlength="7" pattern="[+0-9\(\) .\-]+" title="Use digits and an optional country code" placeholder="+971 …"></label>
-          <label>Email for your receipt<input name="email" type="email" autocomplete="email" maxlength="150" placeholder="you@example.com"></label>
-          <label data-quote-password>Customer portal password<input name="portalPassword" type="password" maxlength="128" autocomplete="new-password" aria-label="Customer portal password" placeholder="New or existing password"></label>
+          <label>Email for your receipt <span aria-hidden="true">*</span><input name="email" type="email" autocomplete="email" required maxlength="150" placeholder="you@example.com"></label>
+          <input name="website" tabindex="-1" autocomplete="off" aria-hidden="true" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none">
           <label>Service <span aria-hidden="true">*</span><select name="service" required><option value="" disabled>Select a service</option><option value="hvac">AC &amp; HVAC</option><option value="plumbing">Plumbing</option><option value="electrical">Electrical</option><option value="painting">Painting</option><option value="carpentry">Carpentry</option><option value="handyman">Handyman</option><option value="ceilings">Ceilings &amp; partitions</option><option value="flooring">Tile &amp; flooring</option><option value="refrigeration">Cold-room refrigeration</option><option value="amc" selected>AMC enquiry</option><option value="other">Other</option></select></label>
           <label>Property type<select name="property"><option value="">Select property</option><option>Apartment</option><option>Villa</option><option>Office</option><option>Retail</option><option>Restaurant</option><option>Warehouse</option><option>Other</option></select></label>
           <div class="amc-form-options field-wide" data-amc-options>
@@ -220,7 +220,7 @@
         </div>
         <div class="quote-submit-actions"><button class="button button-primary form-submit" type="submit">Send quote request</button><button class="button button-outline" type="submit" data-prepare-whatsapp>Prepare WhatsApp message</button></div>
       </fieldset>
-      <div class="quote-receipt" role="status" aria-live="polite"></div><p class="form-note" data-account-note>Sending your first quote creates a customer account. Choose a password of at least 15 characters. Returning customers can use their existing password or <a href="/portal/?return=quote">sign in first</a>. <a href="/privacy-policy/">Privacy Policy</a></p>
+      <div class="quote-receipt" role="status" aria-live="polite"></div><p class="form-note" data-account-note>Your receipt number will be sent to your email. Track your request anytime in the <a href="/portal/">Customer Portal</a>. <a href="/privacy-policy/">Privacy Policy</a></p>
       <noscript><p>Use <a href="https://wa.me/971562014647">WhatsApp</a> or <a href="tel:+971562014647">call 056 201 4647</a> to make an enquiry.</p></noscript>
       <div class="message-review" hidden>
         <h3 tabindex="-1">Your WhatsApp message</h3>

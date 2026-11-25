@@ -217,7 +217,7 @@ const quoteAccount=enquiryForms.length?fetch('/api/customer/me').then(r=>r.ok?r.
 for (const form of enquiryForms) {
   let receipt='',sent=false;
   const output=form.querySelector('.quote-receipt');
-  quoteAccount.then(data=>{if(!data?.user)return;form.querySelector('[data-quote-password]').hidden=true;form.elements.portalPassword.disabled=true;form.elements.email.readOnly=true;for(const key of ['name','email'])if(!form.elements[key].value)form.elements[key].value=data.user[key];const link=document.createElement('a');link.href='/portal/';link.textContent='My quote requests';form.querySelector('[data-account-note]').replaceChildren('Signed in as '+data.user.name+' · ',link)});
+  quoteAccount.then(data=>{if(!data?.user)return;const pwWrap=form.querySelector('[data-quote-password]');if(pwWrap)pwWrap.hidden=true;if(form.elements.portalPassword)form.elements.portalPassword.disabled=true;form.elements.email.readOnly=true;for(const key of ['name','email'])if(!form.elements[key].value)form.elements[key].value=data.user[key];const link=document.createElement('a');link.href='/portal/';link.textContent='My quote requests';form.querySelector('[data-account-note]').replaceChildren('Signed in as '+data.user.name+' · ',link)});
 
   const fields = form.elements;
   const params = new URLSearchParams(location.search);
@@ -343,18 +343,17 @@ for (const form of enquiryForms) {
 
     if(!event.submitter?.hasAttribute('data-prepare-whatsapp')){
       if(sent)return;
-      if(!value('email')){fields.email.focus();output.textContent='Enter an email for your portal account and receipt.';return}
-      if(!fields.portalPassword.disabled&&!fields.portalPassword.value){fields.portalPassword.focus();output.textContent='Enter a new or existing portal password.';return}
+      if(!value('email')){fields.email.focus();output.textContent='Enter an email to receive your quote receipt.';return}
       const group=form.querySelector('fieldset'),submit=form.querySelector('.form-submit');group.disabled=true;output.textContent='Sending your request…';
       try{
         if(!receipt)receipt='SB-'+Date.now().toString(36).toUpperCase()+'-'+crypto.randomUUID().replaceAll('-','').toUpperCase();
-        const res=await fetch('/api/portal/requests',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:receipt,name:value('name'),email:value('email'),phone:value('mobile'),service,serviceId:value('service'),planId:value('plan'),plan:value('plan')?plan.selectedOptions[0].textContent:'',area:value('area'),property:value('property'),country:siteRegions[country.value].name,details:value('details'),password:values.get('portalPassword'),message})});
+        const res=await fetch('/api/portal/requests',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:receipt,name:value('name'),email:value('email'),phone:value('mobile'),service,serviceId:value('service'),planId:value('plan'),plan:value('plan')?plan.selectedOptions[0].textContent:'',area:value('area'),property:value('property'),country:siteRegions[country.value].name,details:value('details'),password:values.get('portalPassword')||'',website:value('website'),message})});
         const r=await res.json();if(!res.ok)throw Error(r.error||'Please try again.');
         sent=true;submit.disabled=true;review.hidden=true;try{sessionStorage.setItem('servicebay-receipt',r.code)}catch{}
-        const a=document.createElement('a');a.href='/portal/';a.textContent='Open customer portal';
-        fields.portalPassword.value='';
-        output.replaceChildren('Quote saved to your account. '+(r.emailStatus==='Accepted'?'Your receipt was submitted for email delivery. ':'Save this code for your records. ')+'Receipt: '+r.code+' · ',a);
-        for(const other of enquiryForms){other.elements.portalPassword.value='';other.elements.portalPassword.disabled=true;other.querySelector('[data-quote-password]').hidden=true;other.elements.email.value=value('email');other.elements.email.readOnly=true;const link=document.createElement('a');link.href='/portal/';link.textContent='My quote dashboard';other.querySelector('[data-account-note]').replaceChildren(link)}
+        const a=document.createElement('a');a.href='/portal/';a.textContent='Track in customer portal';
+        if(fields.portalPassword)fields.portalPassword.value='';
+        output.replaceChildren('Quote request received! '+(r.emailStatus==='Accepted'?'Your receipt has been emailed to '+value('email')+'. ':'Save this receipt code to track your request: ')+'Receipt: '+r.code+' · ',a);
+        for(const other of enquiryForms){if(other.elements.portalPassword){other.elements.portalPassword.value='';other.elements.portalPassword.disabled=true}const pwW=other.querySelector('[data-quote-password]');if(pwW)pwW.hidden=true;other.elements.email.value=value('email');other.elements.email.readOnly=true;const link=document.createElement('a');link.href='/portal/';link.textContent='Track receipt';other.querySelector('[data-account-note]').replaceChildren(link)}
       }catch(err){output.textContent=err.message||'Could not submit the request. Try again.'}finally{group.disabled=false}
       return;
     }

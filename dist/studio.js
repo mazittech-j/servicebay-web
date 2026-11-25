@@ -8,6 +8,7 @@
   const api=async(path,data)=>{const res=await fetch('/api/admin/'+path,data?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}:{});const x=await res.json();if(res.status===401){dirty=false;location.replace('/admin/')}if(!res.ok)throw Error(x.error||'Could not complete the request.');return x};
   let cfg,tab='pages',page='/',epoch=0,dirty=false;
   const tracked=()=>{dirty=true};
+  notice.onclick=()=>{notice.textContent=''};
   panel.addEventListener('input',tracked);
   window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue=''}});
   function discard(){return !dirty||confirm('Leave without saving these changes?')}
@@ -365,7 +366,7 @@
       logCard.append(row);
     }
   }
-  const permDefs=[['pages','Page editor'],['overview','Overview & analytics'],['requests','Quote requests'],['company','Brand & company'],['pricing','Services & AMC'],['connections','Integrations'],['activity','Activity log']];
+  const permDefs=[['overview','Overview & analytics'],['pages','Page editor'],['company','Brand & company'],['pricing','Services & AMC'],['requests','Quote requests'],['connections','Integrations'],['team','Team access'],['security','Security shield'],['activity','Activity log'],['profile','My account']];
   function permPicker(parent,selected=['pages']){
     const set=new Set(selected),wrap=el('div',undefined,'perm-grid'),boxes=new Map();
     for(const [key,label] of permDefs){

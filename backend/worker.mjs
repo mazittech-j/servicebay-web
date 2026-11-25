@@ -5,7 +5,7 @@ import {records} from './store.mjs';
 import {renderPage,cleanSettings,cleanPage,EMPTY_PAGE,defaults,fonts,fail,txt} from './content.mjs';
 import {authAction, session, isSiteOwner, inviteEditor, hash, createEditor, updateOwner, nodeOwnerLogin, quoteCustomer, manage2fa, issueStaffReset, dismissStaffReset, updateStaffPermissions} from './accounts.mjs';
 import {detectProbe, detectHoneypot, isIpBlocked, recordIncident, shieldState, updateShield, testShieldAlert, clearShieldBlocks} from './shield.mjs';
-import {mailSettings,sendReceipt,emailStatus,testSender} from './mail.mjs';
+import {mailSettings,sendReceipt,emailStatus,testSender,sendSystemEmail} from './mail.mjs';
 import {admin,portal,studioLogin} from './views.mjs';
 import {createServiceHubClient} from './erp.mjs';
 const json=(data,status=200)=>new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','X-Frame-Options':'SAMEORIGIN','Referrer-Policy':'strict-origin-when-cross-origin'}});
@@ -112,6 +112,9 @@ export async function serve(request,env,store,platform){
         ((path==='/api/admin/overview'||path==='/api/admin/service-report')&&(perms.has('overview')||perms.has('pricing')))||
         ((path==='/api/admin/inbox'||path==='/api/admin/request')&&perms.has('requests'))||
         ((path==='/api/admin/mail'||path==='/api/admin/mail-test')&&perms.has('connections'))||
+        (path==='/api/admin/staff'&&perms.has('team'))||
+        (path==='/api/admin/shield'&&perms.has('security'))||
+        (path==='/api/admin/profile'&&perms.has('profile'))||
         (path==='/api/admin/activity'&&perms.has('activity'));
       if(!allowed)fail('This action requires the website owner.',403);
     }
@@ -218,7 +221,22 @@ export async function serve(request,env,store,platform){
       if(!statuses.includes(x.status))fail('Invalid status.');
       const row=await store.get(x.key);if(!row.data)fail('Request not found.',404);
       if(x.previous!==row.data.status)fail('Status changed. Reload and retry.',409);
-      if(row.data.status!==x.status)await store.save(x.key,{...row.data,status:x.status,history:[...(row.data.history||[{status:'Received',at:row.data.created}]),{status:x.status,at:new Date().toISOString()}].slice(-40)},row.version,event('Quotes','Updated quote status',(row.data.service||'Service quote')+' · '+row.data.status+' → '+x.status));return json({ok:true});
+      let statusMail='';
+      if(row.data.status!==x.status){
+        await store.save(x.key,{...row.data,status:x.status,history:[...(row.data.history||[{status:'Received',at:row.data.created}]),{status:x.status,at:new Date().toISOString()}].slice(-40)},row.version,event('Quotes','Updated quote status',(row.data.service||'Service quote')+' · '+row.data.status+' → '+x.status));
+        if(row.data.email){
+          const portalUrl=(platform.requestOrigin||u.origin)+'/portal/';
+          try{
+            statusMail=await sendSystemEmail(store,env,{
+              to:row.data.email,
+              subject:'ServiceBay quote status updated: '+x.status,
+              text:`Hello ${row.data.name||'Customer'},\n\nYour ${row.data.service||'service'} request status has been updated from "${row.data.status}" to "${x.status}".\n\nReceipt code: ${row.data.receipt||'Available in portal'}\nTrack your request: ${portalUrl}\n\nServiceBay Technical Services`,
+              idempotencyKey:'sb-status-'+row.data.external+'-'+x.status+'-'+row.version
+            });
+          }catch{statusMail='Unconfirmed'}
+        }
+      }
+      return json({ok:true,emailStatus:statusMail});
     }
     if(path.startsWith('/api/portal/')&&method==='POST'){
       const blockedMins=await isIpBlocked(store,platform.ip);
@@ -256,7 +274,7 @@ export async function serve(request,env,store,platform){
           const record={name,email:user.email,phone,message,service,area,property:txt(x.property||'',80),country:txt(x.country||'',80),details:txt(x.details||'',650),customerId:user.id,receipt:code,created,status:'Received',history:[{status:'Received',at:created}],serviceId:txt(x.serviceId||'',100),planId:txt(x.planId||'',100),plan:txt(x.plan||'',90),external:'sb-'+key.slice(-40),erpId:null};
           try{await store.save(key,record,0,event('Quotes','Received quote',service,'Customer portal'));inserted=true}catch(e){if(e.status!==409)throw e;old=await store.get(key)}
         }
-        if(!inserted&&old.data?.customerId!==user.id)fail('Use the original account or start a new quote.',409);
+        if(!inserted&&(old.data?.customerId||'')!==(user.id||''))fail('Use the original account or start a new quote.',409);
         let delivery;
         try{delivery=await sendReceipt(store,env,key,u.origin)}catch{delivery='Not sent'}
         if(inserted&&integration(env).canSync){try{await sync(env,store,key)}catch{/* Still available for retry in the inbox. */}}

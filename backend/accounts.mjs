@@ -24,7 +24,7 @@ async function checkPassword(value,stored){
 function cookieName(scope,secure){return (secure?'__Host-':'')+'servicebay_'+scope}
 function ticket(req,scope){const name=cookieName(scope,new URL(req.url).protocol==='https:');return (req.headers.get('cookie')||'').split(';').map(x=>x.trim()).find(x=>x.startsWith(name+'='))?.slice(name.length+1)}
 function cookie(req,scope,token,life){const secure=new URL(req.url).protocol==='https:';return cookieName(scope,secure)+'='+token+'; Path=/; HttpOnly; SameSite=Lax; Max-Age='+life+(secure?'; Secure':'')}
-export const ALL_STAFF_PERMS=['pages','overview','requests','company','pricing','connections','activity'];
+export const ALL_STAFF_PERMS=['overview','pages','company','pricing','requests','connections','team','security','activity','profile'];
 export function cleanPermissions(perms){
   if(!Array.isArray(perms))return ['pages'];
   const valid=perms.filter(p=>ALL_STAFF_PERMS.includes(p));
@@ -74,6 +74,34 @@ export async function authAction({req,db,scope,action,env,platform,input}){
       const user={id:random(16),role:'customer',name,email:address,auth};
       try{await db.save(key,user,0)}catch(e){if(e.status===409)reject('An account could not be created with these details. Try signing in.',409);throw e}
       return establish(req,db,scope,user,'');
+    }
+    if(action==='forgot'){
+      const row=await db.get(key),u=row.data;
+      if(u){
+        const code=String(crypto.getRandomValues(new Uint32Array(1))[0]%900000+100000);
+        const token=random(32);
+        const origin=platform.requestOrigin||new URL(req.url).origin;
+        const link=`${origin}/portal/#reset=${token}&email=${encodeURIComponent(address)}`;
+        await db.save(key,{...u,resetCodeHash:await hash(code),resetTokenHash:await hash(token),resetUntil:Date.now()+900000},row.version);
+        await sendSystemEmail(db,env,{
+          to:address,
+          subject:'ServiceBay Customer Portal — Password recovery',
+          text:`You requested a password reset for your ServiceBay customer portal.\n\nYour 6-digit recovery code is: ${code}\nOr open this link directly (valid for 15 minutes):\n${link}\n\nIf you did not request this, you can ignore this email.`,
+          idempotencyKey:'sb-cust-forgot-'+u.id+'-'+Math.floor(Date.now()/300000)
+        });
+      }
+      return {data:{ok:true,message:'If an account matches this email, a recovery code and reset link have been sent.'}};
+    }
+    if(action==='reset'){
+      const row=await db.get(key),u=row.data;
+      const code=String(input.code||'').trim(),token=String(input.token||'').trim();
+      const okCode=code&&u?.resetCodeHash&&same(await hash(code),u.resetCodeHash);
+      const okToken=token&&u?.resetTokenHash&&same(await hash(token),u.resetTokenHash);
+      if(!u||!u.resetUntil||u.resetUntil<Date.now()||(!okCode&&!okToken))reject('Invalid or expired recovery code.',403);
+      const updated={...u,auth:await passwordRecord(input.password)};
+      delete updated.resetCodeHash;delete updated.resetTokenHash;delete updated.resetUntil;
+      await db.save(key,updated,row.version);
+      return establish(req,db,scope,updated,'');
     }
     if(action!=='login')reject('Unknown account action.',404);
     const user=(await db.get(key)).data;await checkPassword(input.password,user?.auth);return establish(req,db,scope,user,'');
@@ -199,6 +227,13 @@ export async function updateOwner(req,db,env,platform,input){
 export async function quoteCustomer(req,db,env,platform,input){
   const signed=await session(req,db,'customer',platform,env);
   if(signed)return {data:{user:signed}};
+  if(!input.password){
+    const addr=input.email?email(input.email):'';
+    if(addr&&(await db.get('customer/'+await hash(addr))).data){
+      reject('An account already exists for this email. Sign in at /portal/ or enter your portal password.',403);
+    }
+    return {data:{user:{id:'',name:input.name,email:addr}}};
+  }
   const address=email(input.email),key='customer/'+await hash(address);
   const args={req,db,env,platform,scope:'customer',input:{...input,email:address}};
   if(!(await db.get(key)).data){

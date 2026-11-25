@@ -6,9 +6,23 @@
   try{code.value=sessionStorage.getItem('servicebay-receipt')||''}catch{}
   const params=new URLSearchParams(location.search);
   if(auth){
-    let mode='login';const setMode=value=>{mode=value;const create=mode==='signup';for(const b of document.querySelectorAll('[data-mode]'))b.setAttribute('aria-pressed',String(b.dataset.mode===mode));document.querySelector('#customer-title').textContent=create?'Create your customer account':'Sign in to your account';document.querySelector('#name-row').hidden=!create;auth.elements.name.required=create;document.querySelector('#customer-confirm').hidden=!create;auth.elements.confirm.disabled=!create;auth.elements.password.minLength=create?15:1;auth.elements.password.autocomplete=create?'new-password':'current-password';auth.elements.password.placeholder=create?'At least 15 characters':'';auth.querySelector('button.primary').textContent=create?'Create account':'Sign in';auth.querySelector('.result').textContent=''};
+    const forgotForm=document.querySelector('#cust-forgot'),resetForm=document.querySelector('#cust-reset'),forgotBtn=document.querySelector('#cust-forgot-btn');
+    const hashParams=new URLSearchParams(location.hash.slice(1)),resetToken=hashParams.get('reset')||'';
+    const showPanel=which=>{auth.hidden=which!=='auth';forgotBtn.parentElement.hidden=which!=='auth';forgotForm.hidden=which!=='forgot';resetForm.hidden=which!=='reset'};
+    let mode='login';const setMode=value=>{mode=value;showPanel('auth');const create=mode==='signup';for(const b of document.querySelectorAll('[data-mode]'))b.setAttribute('aria-pressed',String(b.dataset.mode===mode));document.querySelector('#customer-title').textContent=create?'Create your customer account':'Sign in to your account';document.querySelector('#name-row').hidden=!create;auth.elements.name.required=create;document.querySelector('#customer-confirm').hidden=!create;auth.elements.confirm.disabled=!create;auth.elements.password.minLength=create?15:1;auth.elements.password.autocomplete=create?'new-password':'current-password';auth.elements.password.placeholder=create?'At least 15 characters':'';auth.querySelector('button.primary').textContent=create?'Create account':'Sign in';auth.querySelector('.result').textContent=''};
     for(const b of document.querySelectorAll('[data-mode]'))b.onclick=()=>setMode(b.dataset.mode);
     setMode(params.get('mode')==='signup'?'signup':'login');
+    if(resetToken){
+      history.replaceState(null,'',location.pathname);
+      showPanel('reset');document.querySelector('#customer-title').textContent='Set a new password';
+      resetForm.elements.email.value=hashParams.get('email')||'';
+      document.querySelector('#cust-code-row').hidden=true;
+    }
+    forgotBtn.onclick=()=>{showPanel('forgot');document.querySelector('#customer-title').textContent='Recover your password';forgotForm.elements.email.value=auth.elements.email.value||'';forgotForm.querySelector('.result').textContent=''};
+    document.querySelector('#cust-forgot-back').onclick=()=>setMode('login');
+    document.querySelector('#cust-reset-back').onclick=()=>setMode('login');
+    forgotForm.onsubmit=async e=>{e.preventDefault();const b=forgotForm.querySelector('button.primary'),out=forgotForm.querySelector('.result'),v=Object.fromEntries(new FormData(forgotForm));b.disabled=true;try{const r=await api('/api/customer-auth/forgot',v);showPanel('reset');document.querySelector('#customer-title').textContent='Enter recovery code';resetForm.elements.email.value=v.email;document.querySelector('#cust-code-row').hidden=false;resetForm.querySelector('.result').textContent=r.message}catch(err){out.textContent=err.message}finally{b.disabled=false}};
+    resetForm.onsubmit=async e=>{e.preventDefault();const b=resetForm.querySelector('button.primary'),out=resetForm.querySelector('.result'),v=Object.fromEntries(new FormData(resetForm));if(v.confirm!==v.password){out.textContent='The passwords do not match.';return}b.disabled=true;try{await api('/api/customer-auth/reset',{...v,token:resetToken});location.replace('/portal/')}catch(err){out.textContent=err.message}finally{b.disabled=false}};
     auth.onsubmit=async e=>{e.preventDefault();const b=auth.querySelector('button.primary'),out=auth.querySelector('.result'),values=Object.fromEntries(new FormData(auth));if(mode==='signup'&&values.confirm!==values.password){out.textContent='The passwords do not match.';return}b.disabled=true;try{await api('/api/customer-auth/'+mode,values);location.replace(params.get('return')==='quote'?'/contact/#enquiry':'/portal/')}catch(err){out.textContent=err.message}finally{b.disabled=false}};
   }
   async function load(cursor=''){

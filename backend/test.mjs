@@ -315,4 +315,43 @@ test('Owner login, requestOrigin CSRF, Google Authenticator 2FA, team password r
   }finally{globalThis.fetch=original}
 });
 
+test('Passwordless quote request sends receipt, status updates email customer, and customer password recovery works',async()=>{
+  const config={...env,MAIL_SETTINGS_KEY:'fake-suite-only-encryption-key',RESEND_API_KEY:'re_test_key_123456',RECEIPT_FROM_EMAIL:'service@servicebay.test'};
+  const original=globalThis.fetch,sent=[];
+  try{
+    globalThis.fetch=async(url,req)=>{sent.push(JSON.parse(req.body));return Response.json({id:'mail-id-'+sent.length})};
+    const code='SB-'+Date.now().toString(36).toUpperCase()+'-'+crypto.randomUUID().replaceAll('-','').toUpperCase();
+    const guestEmail='guest-quote@example.test';
+
+    // Passwordless quote submission succeeds and sends receipt email
+    const res=await call('/api/portal/requests',{config,headers:{'CF-Connecting-IP':'guest-ip-1'},post:{code,name:'Guest User',email:guestEmail,phone:'0501234567',message:'AC cooling check',service:'AC & HVAC',area:'Marina',country:'United Arab Emirates'}});
+    assert.equal(res.status,201);
+    const body=await res.json();
+    assert.equal(body.code,code);
+    assert.equal(body.emailStatus,'Accepted');
+    assert.ok(sent.some(m=>m.to[0]===guestEmail&&m.text.includes(code)));
+
+    // Status update sends email to customer
+    const inbox=await (await call('/api/admin/inbox?q='+encodeURIComponent(code),{admin:true,config})).json();
+    const reqKey=inbox.items[0].key;
+    const upd=await call('/api/admin/request',{admin:true,config,post:{key:reqKey,status:'In review',previous:'Received'}});
+    assert.equal(upd.status,200);
+    assert.equal((await upd.json()).emailStatus,'Accepted');
+    assert.ok(sent.some(m=>m.to[0]===guestEmail&&m.subject.includes('In review')));
+
+    // Customer password recovery (forgot -> reset)
+    const custEmail='quote-account@example.test';
+    const forgot=await call('/api/customer-auth/forgot',{config,headers:{'CF-Connecting-IP':'cust-ip-1'},post:{email:custEmail}});
+    assert.equal(forgot.status,200);
+    const recMail=sent.find(m=>m.to[0]===custEmail&&m.subject.includes('Password recovery'));
+    assert.ok(recMail);
+    const match=/recovery code is:\s*(\d{6})/.exec(recMail.text);
+    assert.ok(match);
+    const reset=await call('/api/customer-auth/reset',{config,headers:{'CF-Connecting-IP':'cust-ip-1'},post:{email:custEmail,code:match[1],password:'new-customer-passphrase-2026'}});
+    assert.equal(reset.status,200);
+    assert.ok(cookieOf(reset));
+  }finally{globalThis.fetch=original}
+});
+
+
 
