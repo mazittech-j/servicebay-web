@@ -106,6 +106,7 @@ export async function serve(request,env,store,platform){
       const allowed=
         path==='/api/admin/state'||
         path==='/api/admin/2fa'||
+        path==='/api/admin/studio-prefs'||
         (path==='/api/admin/media'&&(perms.has('pages')||perms.has('company')))||
         (path==='/api/admin/content'&&(u.searchParams.get('scope')==='site'?(perms.has('company')||perms.has('pricing')||perms.has('connections')):perms.has('pages')))||
         ((path==='/api/admin/overview'||path==='/api/admin/service-report')&&(perms.has('overview')||perms.has('pricing')))||
@@ -113,6 +114,25 @@ export async function serve(request,env,store,platform){
         ((path==='/api/admin/mail'||path==='/api/admin/mail-test')&&perms.has('connections'))||
         (path==='/api/admin/activity'&&perms.has('activity'));
       if(!allowed)fail('This action requires the website owner.',403);
+    }
+    if(path==='/api/admin/studio-prefs'){
+      const key='studio-prefs/'+await hash(studioUser.id||'owner'),row=await store.get(key);
+      if(method==='GET')return json(row.data||{});
+      if(method==='POST'){
+        const input=await body(request,2048);
+        const clean={
+          preset:txt(input.preset||'default',30),
+          bg:txt(input.bg||'',20),card:txt(input.card||'',20),ink:txt(input.ink||'',20),
+          sidebar:txt(input.sidebar||'',20),accent:txt(input.accent||'',20),
+          fontSize:Math.min(18,Math.max(12,Number(input.fontSize)||14)),
+          headingScale:Math.min(1.3,Math.max(0.85,Number(input.headingScale)||1)),
+          sidebarWidth:Math.min(290,Math.max(190,Number(input.sidebarWidth)||224)),
+          density:['compact','standard','comfortable'].includes(input.density)?input.density:'standard',
+          radius:Math.min(16,Math.max(4,Number(input.radius)||11))
+        };
+        await store.save(key,clean,row.version);
+        return json(clean);
+      }
     }
     if(path==='/api/admin/2fa'){
       if(method==='GET')return json(await manage2fa({db:store,platform,user:studioUser,input:{action:'status'}}));

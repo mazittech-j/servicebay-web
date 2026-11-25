@@ -23,7 +23,7 @@
     if(tab==='team'){await team(ticket);return}
     if(tab==='profile'){await profile(ticket);return}
     if(tab==='security'){await securityShield(ticket);return}
-    if(tab==='security2fa'){await twoFactorCard(panel,ticket);return}
+    if(tab==='security2fa'){await studioPrefsCard(panel,ticket);await twoFactorCard(panel,ticket);return}
     if(tab==='requests'){await inbox(ticket);return}
     const global=tab!=='pages',endpoint='content?'+(global?'scope=site':'path='+encodeURIComponent(page));
     const item=await api(endpoint);if(ticket!==epoch)return;let data=item.draft,version=item.version;
@@ -83,7 +83,11 @@
       const theme=card(panel,'Website appearance'),grid=el('div',undefined,'fields');theme.append(grid);
       bind(field(grid,'Font family',data.font,'text',cfg.fonts),'font');const size=bind(field(grid,'Base font size (px)',data.size,'number'),'size');size.min=14;size.max=24;
       typeControls(theme,data,size);
-      for(const [key,label] of Object.entries({color:'Accent',paper:'Page background',ink:'Body text'}))bind(field(grid,label,data[key],'color'),key);actions(panel);return;
+      const colorFields={color:'Accent',paper:'Page background',ink:'Body text',dark:'Dark sections & footer',tint:'Tinted card surface',muted:'Muted / secondary text',line:'Borders & dividers'};
+      const colorInputs={};
+      for(const [key,label] of Object.entries(colorFields))colorInputs[key]=bind(field(grid,label,data[key]||cfg.defaults[key],'color'),key);
+      buttons(theme,button('Reset website colors',()=>{for(const k of Object.keys(colorFields)){data[k]=cfg.defaults[k];colorInputs[k].value=cfg.defaults[k]}dirty=true;notice.textContent='Website colors reset to defaults. Publish changes to apply.'},'secondary'));
+      actions(panel);return;
     }
     const c=card(panel,'Measurement & verification');c.append(el('p','Measurement starts after a visitor allows it. Leave an ID empty to disable that integration.'));const g=el('div',undefined,'fields');c.append(g);
     for(const [key,label] of Object.entries({ga:'Google Analytics 4 measurement ID',ads:'Google Ads tag ID',pixel:'Meta Pixel ID',verification:'Search Console verification token'}))bind(field(g,label,data[key]),key);actions(c);
@@ -212,12 +216,83 @@
     }else c.append(el('p','Configure RESEND_API_KEY and RECEIPT_FROM_EMAIL on your hosting provider (or add MAIL_SETTINGS_KEY to edit here).'));
     test.disabled=!x.configured||!recipient;host.append(test);c.append(host,el('p',recipient?'Test recipient · '+recipient:'Set your email in My account or Brand & company to receive a test.','stamp'));
   }
+  const defaultPrefs={preset:'default',bg:'#f3f5f6',card:'#ffffff',ink:'#152936',sidebar:'#132737',accent:'#ad3516',fontSize:14,headingScale:1,sidebarWidth:224,density:'standard',radius:11};
+  const studioPresets={
+    default:{label:'Default Navy & Rust',bg:'#f3f5f6',card:'#ffffff',ink:'#152936',sidebar:'#132737',accent:'#ad3516'},
+    dark:{label:'Dark Slate',bg:'#0f172a',card:'#1e293b',ink:'#f1f5f9',sidebar:'#090d16',accent:'#e05d38'},
+    light:{label:'Clean Light Blue',bg:'#f8fafc',card:'#ffffff',ink:'#0f172a',sidebar:'#1e293b',accent:'#1d4ed8'},
+    emerald:{label:'Emerald Operations',bg:'#f2f7f5',card:'#ffffff',ink:'#122b24',sidebar:'#0f2e26',accent:'#0d7a5f'}
+  };
+  function applyStudioPrefs(raw){
+    const p={...defaultPrefs,...(raw||{})},root=document.documentElement.style;
+    const dark=p.bg&&parseInt(p.bg.slice(1,3),16)<60;
+    root.setProperty('--sb-bg',p.bg||defaultPrefs.bg);
+    root.setProperty('--sb-card',p.card||defaultPrefs.card);
+    root.setProperty('--sb-ink',p.ink||defaultPrefs.ink);
+    root.setProperty('--sb-muted',dark?'#94a3b8':'#536570');
+    root.setProperty('--sb-line',dark?'#334155':'#d5dfe3');
+    root.setProperty('--sb-sidebar',p.sidebar||defaultPrefs.sidebar);
+    root.setProperty('--sb-sidebar-ink','#e2ecf1');
+    root.setProperty('--sb-accent',p.accent||defaultPrefs.accent);
+    root.setProperty('--sb-font-size',(p.fontSize||14)+'px');
+    root.setProperty('--sb-h-scale',String(p.headingScale||1));
+    root.setProperty('--sb-sidebar-w',(p.sidebarWidth||224)+'px');
+    const padMap={compact:'12px',standard:'18px',comfortable:'26px'},inPadMap={compact:'.36rem .55rem',standard:'.5rem .68rem',comfortable:'.68rem .85rem'};
+    root.setProperty('--sb-pad',padMap[p.density]||'18px');
+    root.setProperty('--sb-input-pad',inPadMap[p.density]||'.5rem .68rem');
+    root.setProperty('--sb-radius',(p.radius||11)+'px');
+    try{localStorage.setItem('servicebay-studio-prefs',JSON.stringify(p))}catch{}
+    return p;
+  }
+  try{const cached=localStorage.getItem('servicebay-studio-prefs');if(cached)applyStudioPrefs(JSON.parse(cached))}catch{}
+
+  async function studioPrefsCard(host,ticket){
+    let saved={};try{saved=await api('studio-prefs')}catch{}
+    if(ticket!==epoch)return;
+    const p=applyStudioPrefs({...defaultPrefs,...saved});
+    const c=card(host,'Admin panel theme & sizing');
+    c.append(el('p','Customize the admin panel colors, text size, heading scale, sidebar width, and spacing. Changes preview live.'));
+    const g=el('div',undefined,'fields');c.append(g);
+    const presetNames={default:'Default Navy & Rust',dark:'Dark Slate',light:'Clean Light Blue',emerald:'Emerald Operations',custom:'Custom'};
+    const presetSel=field(g,'Theme preset',presetNames[p.preset]||'Default Navy & Rust','text',Object.values(presetNames));
+    const densityNames={compact:'Compact',standard:'Standard',comfortable:'Comfortable'};
+    const densitySel=field(g,'Spacing / density',densityNames[p.density]||'Standard','text',Object.values(densityNames));
+    const fontIn=field(g,'Base text size (px)',p.fontSize,'number');fontIn.min=12;fontIn.max=18;fontIn.step=1;
+    const hScaleIn=field(g,'Heading scale (0.85–1.30)',p.headingScale,'number');hScaleIn.min=0.85;hScaleIn.max=1.3;hScaleIn.step=0.05;
+    const sideIn=field(g,'Sidebar width (px)',p.sidebarWidth,'number');sideIn.min=190;sideIn.max=290;sideIn.step=4;
+    const radIn=field(g,'Corner radius (px)',p.radius,'number');radIn.min=4;radIn.max=16;radIn.step=1;
+    const bgIn=field(g,'Workspace background',p.bg,'color'),cardIn=field(g,'Card background',p.card,'color'),inkIn=field(g,'Text color',p.ink,'color'),sideColIn=field(g,'Sidebar color',p.sidebar,'color'),accIn=field(g,'Accent & buttons',p.accent,'color');
+    const readForm=()=>{
+      const pKey=Object.entries(presetNames).find(([,v])=>v===presetSel.value)?.[0]||'custom';
+      const dKey=Object.entries(densityNames).find(([,v])=>v===densitySel.value)?.[0]||'standard';
+      return {preset:pKey,bg:bgIn.value,card:cardIn.value,ink:inkIn.value,sidebar:sideColIn.value,accent:accIn.value,fontSize:Number(fontIn.value)||14,headingScale:Number(hScaleIn.value)||1,sidebarWidth:Number(sideIn.value)||224,density:dKey,radius:Number(radIn.value)||11};
+    };
+    presetSel.onchange=()=>{
+      const pKey=Object.entries(presetNames).find(([,v])=>v===presetSel.value)?.[0];
+      if(pKey&&studioPresets[pKey]){
+        const pr=studioPresets[pKey];
+        bgIn.value=pr.bg;cardIn.value=pr.card;inkIn.value=pr.ink;sideColIn.value=pr.sidebar;accIn.value=pr.accent;
+        applyStudioPrefs(readForm());
+      }
+    };
+    for(const inp of [bgIn,cardIn,inkIn,sideColIn,accIn])inp.addEventListener('input',()=>{presetSel.value='Custom';applyStudioPrefs(readForm())});
+    for(const inp of [densitySel,fontIn,hScaleIn,sideIn,radIn])inp.addEventListener('input',()=>applyStudioPrefs(readForm()));
+    buttons(c,button('Save admin theme & sizing',async()=>{
+      const next=applyStudioPrefs(readForm());
+      await api('studio-prefs',next);dirty=false;notice.textContent='Admin panel theme and sizing saved.';
+    },'primary'),button('Reset to default',async()=>{
+      const def=applyStudioPrefs(defaultPrefs);
+      await api('studio-prefs',def);dirty=false;await open(tab);notice.textContent='Admin panel reset to default theme and sizing.';
+    },'secondary'));
+  }
+
   async function profile(ticket){
     const c=card(panel,'Studio sign-in details');c.append(el('p','Update your studio login and confirm with your current password. Changes sign out other studio sessions.'));
     const g=el('div',undefined,'fields');c.append(g);
     const name=field(g,'Display name',cfg.user.name),login=field(g,'Username',cfg.user.username),email=field(g,'Login email',cfg.user.email,'email'),current=secret(g,'Current password');
     current.autocomplete='current-password';const fresh=secret(g,'New password','Leave blank to keep your password'),confirm=secret(g,'Confirm new password');
     buttons(c,button('Save account details',async()=>{if(fresh.value!==confirm.value)throw Error('The new passwords do not match.');await api('profile',{name:name.value,username:login.value,email:email.value,currentPassword:current.value,newPassword:fresh.value});dirty=false;location.replace('/admin/#profile')},'primary'));
+    await studioPrefsCard(panel,ticket);
     await twoFactorCard(panel,ticket);
   }
   async function twoFactorCard(host,ticket){
@@ -393,5 +468,5 @@
 
   document.querySelector('#navigation').onclick=e=>{const n=e.target.closest('[data-tab]');if(n&&discard())open(n.dataset.tab).catch(e=>notice.textContent=e.message)};
   by('studio-logout').onclick=async()=>{if(!discard())return;try{const res=await fetch('/api/studio-auth/logout',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});if(!res.ok)throw Error('Sign out failed.');dirty=false;location.replace('/admin/')}catch(e){notice.textContent=e.message}};
-  api('state').then(async x=>{cfg=x;await open(cfg.user.role==='owner'?(Object.hasOwn(titles,location.hash.slice(1))?location.hash.slice(1):'overview'):'pages')}).catch(e=>notice.textContent=e.message);
+  api('state').then(async x=>{cfg=x;try{const sp=await api('studio-prefs');if(sp&&Object.keys(sp).length)applyStudioPrefs(sp)}catch{}const h=location.hash.slice(1);const firstTab=cfg.user.role==='owner'?(Object.hasOwn(titles,h)?h:'overview'):((cfg.user.permissions?.includes(h)||h==='security2fa')?h:(cfg.user.permissions?.[0]||'pages'));await open(firstTab)}).catch(e=>notice.textContent=e.message);
 })();
