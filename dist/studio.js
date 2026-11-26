@@ -92,16 +92,34 @@
     }
     const c=card(panel,'Measurement & verification');c.append(el('p','Measurement starts after a visitor allows it. Leave an ID empty to disable that integration.'));const g=el('div',undefined,'fields');c.append(g);
     for(const [key,label] of Object.entries({ga:'Google Analytics 4 measurement ID',ads:'Google Ads tag ID',pixel:'Meta Pixel ID',verification:'Search Console verification token'}))bind(field(g,label,data[key]),key);actions(c);
-    const conn=card(panel,'ServiceHub ERP & payments'),i=cfg.integrations;
-    const erpChips=el('div',undefined,'env-list');
-    erpChips.append(el('span','Database: '+cfg.storage,'status-chip'),el('span','ERP sync: '+(i.canSync?'Active':'Not configured'),'status-chip'));
-    conn.append(erpChips,el('p','Configure SERVICEHUB_API_URL and SERVICEHUB_API_KEY on your hosting provider. ServiceHub handles customer accounts and Stripe payments.'));
+    const conn=card(panel,'ServiceHub ERP & payments');
+    const erpBox=el('div');conn.append(erpBox);
+    const drawErp=(i)=>{
+      cfg.integrations=i;
+      erpBox.replaceChildren();
+      const erpChips=el('div',undefined,'env-list');
+      const syncLabel=i.paused?'Disconnected (Paused)':i.canSync?(i.lastCheck?.status?.startsWith('Revoked')?i.lastCheck.status:'Active'):'Not configured';
+      erpChips.append(el('span','Database: '+cfg.storage,'status-chip'),el('span','ERP sync: '+syncLabel,'status-chip'));
+      if(i.lastCheck)erpChips.append(el('span','Last check: '+i.lastCheck.status+' · '+stamp(i.lastCheck.at),'status-chip'));
+      erpBox.append(erpChips,el('p','Configure SERVICEHUB_API_URL and SERVICEHUB_API_KEY on your hosting provider. ServiceHub handles customer accounts and Stripe payments.'));
+      const erpActs=[];
+      if(i.portal||i.canSync||i.paused){
+        if(!i.paused)erpActs.push(button('Verify connection',async()=>{const next=await api('erp',{action:'test'});drawErp(next);notice.textContent='ERP connection check: '+(next.lastCheck?.status||'Done')+'.'},'secondary'));
+        erpActs.push(button(i.paused?'Reconnect ERP':'Disconnect ERP',async()=>{
+          const next=await api('erp',{action:i.paused?'reconnect':'disconnect'});
+          drawErp(next);notice.textContent=next.paused?'ServiceHub ERP sync disconnected.':'ServiceHub ERP sync re-enabled.';
+        },i.paused?'primary':'secondary'));
+      }
+      if(erpActs.length)buttons(erpBox,...erpActs);
+      if(i.portal){const a=el('a','Open ServiceHub customer login');a.href=i.portal;erpBox.append(a);for(const [label,key] of [['Stripe test webhook','stripeTest'],['Stripe live webhook','stripeLive']]){const f=field(erpBox,label,i[key]);f.readOnly=true}}
+    };
+    drawErp(cfg.integrations||{});
+    api('erp').then(drawErp).catch(()=>{});
     await emailConfig(ticket);if(ticket!==epoch)return;
     if(cfg.user.role==='owner'){
       const transfer=card(panel,'Move to another host');transfer.append(el('p','Download your page drafts, published content, uploaded images and customer requests for the database import. The file contains customer contact details. Keep it private.'));
       buttons(transfer,button('Download database export',async()=>{const rows=[];let cursor='';do{const v=await api('export?cursor='+encodeURIComponent(cursor));rows.push(...v.rows);cursor=v.next}while(cursor);const blob=new Blob([JSON.stringify({format:'servicebay-v1',created:new Date().toISOString(),rows})],{type:'application/json'});const url=URL.createObjectURL(blob),a=el('a');a.href=url;a.download='servicebay-private-backup.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),10000);notice.textContent='Database export downloaded.'}));
     }
-    if(i.portal){const a=el('a','Open ServiceHub customer login');a.href=i.portal;conn.append(a);for(const [label,key] of [['Stripe test webhook','stripeTest'],['Stripe live webhook','stripeLive']]){const f=field(conn,label,i[key]);f.readOnly=true}}
   }
   const stamp=value=>new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Dubai',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}).format(new Date(value));
   const countsList=[['All enquiries','total'],['Pending','pending'],['Scheduled','scheduled'],['Completed','completed'],['Other','other']];

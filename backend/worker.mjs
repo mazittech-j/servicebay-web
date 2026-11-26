@@ -25,6 +25,10 @@ function integration(env){
   const root=u.origin+match[1],tenant=match[2];
   return {portal:root+'/portal/'+tenant,stripeTest:root+'/api/stripe/'+tenant+'/test',stripeLive:root+'/api/stripe/'+tenant+'/live',canSync:/^shw_[\w-]{43}$/.test(env.SERVICEHUB_API_KEY||'')};
 }
+async function erpState(store,env){
+  const base=integration(env),saved=(await store.get('security/erp')).data||{};
+  return {...base,paused:!!saved.paused,canSync:!saved.paused&&!!base.canSync,lastCheck:saved.lastCheck||null};
+}
 async function basic(request,env,store,identity){
   const auth=request.headers.get('authorization')||'';
   if(!env.ADMIN_PASSWORD||env.ADMIN_PASSWORD.length<24||!auth.startsWith('Basic '))return false;
@@ -39,12 +43,17 @@ async function requestKey(code){const match=receiptPattern.exec(code);if(!match)
 async function sync(env,store,key) {
   const entry=await store.get(key);if(!entry.data)fail('Request not found.',404);
   if(entry.data.erpId)return entry;
-  if(!integration(env).canSync)fail('Add the ServiceHub API URL and integration key to enable delivery.',503);
+  const erp=await erpState(store,env);
+  if(erp.paused)fail('ServiceHub ERP sync is disconnected in Studio > Integrations.',503);
+  if(!erp.canSync)fail('Add the ServiceHub API URL and integration key to enable delivery.',503);
   const r=entry.data,c=createServiceHubClient({baseUrl:env.SERVICEHUB_API_URL,apiKey:env.SERVICEHUB_API_KEY});
   const attr=[r.source?'Source: '+r.source:'',r.medium?'Medium: '+r.medium:'',r.campaign?'Campaign: '+r.campaign:'',r.device?'Device: '+r.device:''].filter(Boolean).join(' | ');
   const fullMsg=attr?(r.message+'\n\n['+attr+']'):r.message;
   let response;
-  try{response=await c.submit('enquiries',r.external,{external_id:r.external,name:r.name,email:r.email,phone:r.phone,message:fullMsg,source:r.source||'Direct',medium:r.medium||'',campaign:r.campaign||'',device:r.device||'',service:r.service||'',area:r.area||'',property:r.property||'',country:r.country||''})}catch(err){fail(err?.message||'ServiceHub did not confirm delivery. The request is saved and can be retried.',502)}
+  try{response=await c.submit('enquiries',r.external,{external_id:r.external,name:r.name,email:r.email,phone:r.phone,message:fullMsg,source:r.source||'Direct',medium:r.medium||'',campaign:r.campaign||'',device:r.device||'',service:r.service||'',area:r.area||'',property:r.property||'',country:r.country||''})}catch(err){
+    if(err?.status===401||err?.status===403){try{const row=await store.get('security/erp');await store.save('security/erp',{...row.data,lastCheck:{status:'Revoked / Unauthorized ('+err.status+')',at:new Date().toISOString()}},row.version)}catch{}}
+    fail(err?.message||'ServiceHub did not confirm delivery. The request is saved and can be retried.',502);
+  }
   if(!Number.isSafeInteger(Number(response?.id))||Number(response.id)<1)fail('ServiceHub returned an unrecognised receipt. Retry using the same request.',502);
   // Another administrator can change status while the external call is in progress.
   for(let n=0;n<3;n++){const next=await store.get(key);if(next.data.erpId)return next;try{const upd={...next.data,erpId:Number(response.id)};delete upd.erpError;await store.save(key,upd,next.version,event('Quotes','Sent quote to ServiceHub',r.service||'Service quote'));return await store.get(key)}catch(e){if(e.status!==409)throw e}}
@@ -122,12 +131,40 @@ export async function serve(request,env,store,platform){
         (path==='/api/admin/content'&&(u.searchParams.get('scope')==='site'?(perms.has('company')||perms.has('pricing')||perms.has('connections')):perms.has('pages')))||
         ((path==='/api/admin/overview'||path==='/api/admin/service-report')&&(perms.has('overview')||perms.has('pricing')))||
         ((path==='/api/admin/inbox'||path==='/api/admin/request')&&perms.has('requests'))||
-        ((path==='/api/admin/mail'||path==='/api/admin/mail-test')&&perms.has('connections'))||
+        ((path==='/api/admin/mail'||path==='/api/admin/mail-test'||path==='/api/admin/erp')&&perms.has('connections'))||
         (path==='/api/admin/staff'&&perms.has('team'))||
         (path==='/api/admin/shield'&&perms.has('security'))||
         (path==='/api/admin/profile'&&perms.has('profile'))||
         (path==='/api/admin/activity'&&perms.has('activity'));
       if(!allowed)fail('This action requires the website owner.',403);
+    }
+    if(path==='/api/admin/erp'){
+      if(method==='GET')return json(await erpState(store,env));
+      if(method==='POST'){
+        const input=await body(request,1024),row=await store.get('security/erp'),cur=row.data||{};
+        if(input.action==='disconnect'){
+          await store.save('security/erp',{...cur,paused:true},row.version,event('Website','Disconnected ServiceHub ERP sync'));
+          return json(await erpState(store,env));
+        }
+        if(input.action==='reconnect'){
+          await store.save('security/erp',{...cur,paused:false},row.version,event('Website','Re-enabled ServiceHub ERP sync'));
+          return json(await erpState(store,env));
+        }
+        if(input.action==='test'){
+          const base=integration(env);
+          if(!base.canSync)fail('Configure SERVICEHUB_API_URL and SERVICEHUB_API_KEY first.',409);
+          let status='Unreachable';
+          try{
+            const res=await fetch(env.SERVICEHUB_API_URL.replace(/\/$/,'')+'/requests/999999999',{headers:{Authorization:'Bearer '+env.SERVICEHUB_API_KEY},signal:AbortSignal.timeout(8000),redirect:'error'});
+            if(res.status===401||res.status===403)status='Revoked / Unauthorized ('+res.status+')';
+            else if(res.ok||res.status===404||res.status===400)status='Connected';
+            else status='Provider error ('+res.status+')';
+          }catch{status='Connection timeout'}
+          await store.save('security/erp',{...cur,lastCheck:{status,at:new Date().toISOString()}},row.version,event('Website','Tested ServiceHub ERP connection',status));
+          return json(await erpState(store,env));
+        }
+        fail('Unknown ERP action.');
+      }
     }
     if(path==='/api/admin/studio-prefs'){
       const key='studio-prefs/'+await hash(studioUser.id||'owner'),row=await store.get(key);
@@ -199,7 +236,7 @@ export async function serve(request,env,store,platform){
       const user=await session(request,store,'customer',platform,env);if(!user)fail('Sign in to view your quotes.',401);
       const [page,counts]=await Promise.all([store.recentForCustomer(user.id,u.searchParams.get('cursor')||undefined),store.requestCounts(user.id)]);return json({...page,counts});
     }
-    if(path==='/api/admin/state'&&method==='GET')return json({routes,fonts,typeRoles:typeRoles.map(({key,label,min,max})=>({key,label,min,max})),defaults,user:studioUser,integrations:studioUser.role==='owner'?integration(env):{},storage:platform.storage});
+    if(path==='/api/admin/state'&&method==='GET')return json({routes,fonts,typeRoles:typeRoles.map(({key,label,min,max})=>({key,label,min,max})),defaults,user:studioUser,integrations:(studioUser.role==='owner'||(studioUser.permissions||[]).includes('connections'))?await erpState(store,env):{},storage:platform.storage});
     if(path==='/api/admin/content'){
       const isGlobal=u.searchParams.get('scope')==='site',target=u.searchParams.get('path')||'/';
       if(!isGlobal&&!routes.includes(target))fail('Choose an editable page.',404);
@@ -294,7 +331,7 @@ export async function serve(request,env,store,platform){
         if(!inserted&&(old.data?.customerId||'')!==(user.id||''))fail('Use the original account or start a new quote.',409);
         let delivery;
         try{delivery=await sendReceipt(store,env,key,u.origin)}catch{delivery='Not sent'}
-        if(inserted&&integration(env).canSync){try{await sync(env,store,key)}catch(err){try{const cur=await store.get(key);if(cur.data&&!cur.data.erpId)await store.save(key,{...cur.data,erpError:String(err?.message||'Sync failed').slice(0,200)},cur.version)}catch{}}}
+        if(inserted&&(await erpState(store,env)).canSync){try{await sync(env,store,key)}catch(err){try{const cur=await store.get(key);if(cur.data&&!cur.data.erpId)await store.save(key,{...cur.data,erpError:String(err?.message||'Sync failed').slice(0,200)},cur.version)}catch{}}}
         const reply=json({code,emailStatus:delivery},inserted?201:200);
         if(account.cookie)reply.headers.set('Set-Cookie',account.cookie);return reply;
       }

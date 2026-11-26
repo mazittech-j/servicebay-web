@@ -372,8 +372,18 @@ test('Traffic source & device attribution tracks visits, compares platforms in a
     const google=ov.sources.platforms.find(p=>p.source==='Google');
     assert.ok(google&&google.visits>=1&&google.leads>=1);
     assert.ok(ov.sources.devices.some(d=>d.device==='Mobile'));
+
+    // ERP verify detects revoked key (401) and manual disconnect/reconnect works
+    globalThis.fetch=async()=>new Response('Unauthorized',{status:401});
+    const rev=await (await call('/api/admin/erp',{admin:true,config:erpCfg,post:{action:'test'}})).json();
+    assert.match(rev.lastCheck.status,/Revoked/);
+    const disc=await (await call('/api/admin/erp',{admin:true,config:erpCfg,post:{action:'disconnect'}})).json();
+    assert.equal(disc.paused,true);assert.equal(disc.canSync,false);
+    const rec=await (await call('/api/admin/erp',{admin:true,config:erpCfg,post:{action:'reconnect'}})).json();
+    assert.equal(rec.paused,false);assert.equal(rec.canSync,true);
   }finally{globalThis.fetch=original}
 });
+
 
 
 
