@@ -34,7 +34,7 @@ async function erpCipher(env){
 }
 async function erpCredentials(store,env){
   const saved=(await store.get('security/erp')).data||{};
-  const extra={autoSync:saved.autoSync!==false,lastCheck:saved.lastCheck||null,lastSync:saved.lastSync||null};
+  const extra={autoSync:saved.autoSync!==false,lastCheck:saved.lastCheck||null,lastSync:saved.lastSync||null,lastWebhook:saved.lastWebhook||null,webhookSecret:saved.webhookSecret||''};
   if(saved.deleted&&!saved.apiUrl)return {apiUrl:'',apiKey:'',paused:false,source:'none',...extra};
   if(saved.apiUrl&&saved.secret&&saved.iv){
     try{
@@ -45,8 +45,19 @@ async function erpCredentials(store,env){
   return {apiUrl:env.SERVICEHUB_API_URL||'',apiKey:env.SERVICEHUB_API_KEY||'',paused:!!saved.paused,source:env.SERVICEHUB_API_URL?'env':'none',...extra};
 }
 async function erpState(store,env){
-  const creds=await erpCredentials(store,env),base=parseErpUrl(creds.apiUrl,creds.apiKey);
-  return {...base,apiUrl:creds.apiUrl,source:creds.source,paused:creds.paused,canSync:!creds.paused&&!!base.canSync,autoSync:creds.autoSync,lastCheck:creds.lastCheck,lastSync:creds.lastSync};
+  let creds=await erpCredentials(store,env);
+  if(!creds.webhookSecret){
+    try{
+      const row=await store.get('security/erp'),cur=row.data||{};
+      if(!cur.webhookSecret){
+        const secret='sbwh_'+crypto.randomUUID().replaceAll('-','');
+        await store.save('security/erp',{...cur,webhookSecret:secret},row.version);
+        creds={...creds,webhookSecret:secret};
+      }else creds={...creds,webhookSecret:cur.webhookSecret};
+    }catch{}
+  }
+  const base=parseErpUrl(creds.apiUrl,creds.apiKey);
+  return {...base,apiUrl:creds.apiUrl,source:creds.source,paused:creds.paused,canSync:!creds.paused&&!!base.canSync,autoSync:creds.autoSync,lastCheck:creds.lastCheck,lastSync:creds.lastSync,lastWebhook:creds.lastWebhook,webhookSecret:creds.webhookSecret};
 }
 async function basic(request,env,store,identity){
   const auth=request.headers.get('authorization')||'';
@@ -81,8 +92,8 @@ async function sync(env,store,key) {
   for(let n=0;n<3;n++){const next=await store.get(key);if(next.data.erpId)return next;try{const upd={...next.data,erpId,erpSyncedStatus:next.data.status||'New'};delete upd.erpError;await store.save(key,upd,next.version,event('Quotes','Sent quote to ServiceHub',r.service||'Service quote'));return await store.get(key)}catch(e){if(e.status!==409)throw e}}
   fail('Reload and retry delivery.',409);
 }
-async function pullErpPricing(env,store,client,{quiet=false}={}){
-  const list=await client.listServices();
+async function pullErpPricing(env,store,client,{quiet=false,preloadedList=null}={}){
+  const list=preloadedList!==null?preloadedList:await client.listServices();
   if(list===null)return {unsupported:true,updatedCount:0,total:0};
   const srow=await store.get('settings');
   const curSet=srow.data||{draft:defaults,live:defaults};
@@ -177,11 +188,58 @@ export async function serve(request,env,store,platform){
     const u=new URL(request.url),path=u.pathname,method=request.method;
     if(!['GET','POST','HEAD'].includes(method))return json({error:'Unsupported method.'},405);
     const reqOrigin=request.headers.get('origin');
-    if(method==='POST'&&reqOrigin!==u.origin&&(!platform.requestOrigin||reqOrigin!==platform.requestOrigin))return json({error:'Open the form on this site and retry.'},403);
+    if(method==='POST'&&path!=='/api/erp/webhook'&&reqOrigin!==u.origin&&(!platform.requestOrigin||reqOrigin!==platform.requestOrigin))return json({error:'Open the form on this site and retry.'},403);
     const probeReason=detectProbe(path,u.search);
     if(probeReason){
       await recordIncident({db:store,env,ip:platform.ip,reason:'Attack probe blocked',target:path,detail:probeReason,immediateBlock:true});
       return json({error:'Request blocked by security shield.'},403);
+    }
+    if(path==='/api/erp/webhook'){
+      const creds=await erpCredentials(store,env);
+      const token=u.searchParams.get('token')||request.headers.get('x-webhook-secret')||'';
+      const bearer=(request.headers.get('authorization')||'').replace(/^Bearer\s+/i,'').trim();
+      const authed=(creds.webhookSecret&&token===creds.webhookSecret)||(creds.apiKey&&bearer===creds.apiKey);
+      if(!authed)return json({error:'Invalid webhook token.'},401);
+      if(creds.paused)return json({error:'ServiceHub ERP sync is disconnected.'},503);
+      if(method==='GET'||method==='HEAD')return json({ok:true,ready:true});
+      let payload={};try{payload=await body(request,256000)}catch{payload={}}
+      const eventName=txt(String(payload.event||payload.type||payload.action||'webhook'),60)||'webhook';
+      let pricesUpdated=0,statusUpdated=0;
+      const rawList=Array.isArray(payload.services)?payload.services:Array.isArray(payload.pricing)?payload.pricing:Array.isArray(payload.catalog)?payload.catalog:Array.isArray(payload.items)?payload.items:Array.isArray(payload.data?.services)?payload.data.services:Array.isArray(payload.data)?payload.data:((payload.service||payload.plan)&&typeof (payload.service||payload.plan)==='object'?[payload.service||payload.plan]:null);
+      if(rawList){
+        const pr=await pullErpPricing(env,store,null,{quiet:false,preloadedList:rawList});
+        pricesUpdated=pr.updatedCount;
+      }else if(/service|pric|plan|catalog/i.test(eventName)&&parseErpUrl(creds.apiUrl,creds.apiKey).canSync){
+        try{
+          const pr=await pullErpPricing(env,store,createServiceHubClient({baseUrl:creds.apiUrl,apiKey:creds.apiKey}),{quiet:false});
+          pricesUpdated=pr.updatedCount;
+        }catch{}
+      }
+      const obj=payload.service_request||payload.enquiry||payload.request||payload.lead||payload.data||payload;
+      const rawStatus=txt(String(obj?.status||obj?.stage||payload.status||''),40);
+      const extId=txt(String(obj?.external_id||obj?.externalId||payload.external_id||''),120);
+      const erpIdNum=Number(obj?.erp_id??obj?.erpId??obj?.request_id??obj?.enquiry_id??obj?.id??payload.id??0);
+      const mappedStatus=statuses.find(s=>s.toLowerCase()===rawStatus.toLowerCase())||'';
+      if(mappedStatus&&(extId||(Number.isSafeInteger(erpIdNum)&&erpIdNum>0))){
+        let cursor='request/~',match=null;
+        do{
+          const page=await store.inbox(cursor);
+          match=(page.items||[]).find(r=>(extId&&r.external===extId)||(erpIdNum>0&&Number(r.erpId)===erpIdNum))||null;
+          cursor=page.next;
+        }while(cursor&&!match);
+        if(match&&match.status!==mappedStatus){
+          const row=await store.get(match.key);
+          if(row.data){
+            await store.save(match.key,{...row.data,status:mappedStatus,erpSyncedStatus:mappedStatus,history:[...(row.data.history||[{status:'Received',at:row.data.created}]),{status:mappedStatus,at:new Date().toISOString()}].slice(-40)},row.version,event('Quotes','ERP webhook updated status',(row.data.service||'Service quote')+' · '+row.data.status+' → '+mappedStatus));
+            statusUpdated=1;
+          }
+        }
+      }
+      try{
+        const erpRow=await store.get('security/erp'),cur=erpRow.data||{};
+        await store.save('security/erp',{...cur,lastWebhook:{at:new Date().toISOString(),event:eventName}},erpRow.version);
+      }catch{}
+      return json({ok:true,event:eventName,pricesUpdated,statusUpdated});
     }
     const adminRoute=path==='/admin'||path.startsWith('/admin/')||path.startsWith('/api/admin/')||u.searchParams.get('studio')==='1';
     const privateNode=platform.kind==='node'&&env.SITE_ACCESS!=='public';

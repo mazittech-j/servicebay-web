@@ -103,6 +103,7 @@
       if(i.source&&i.source!=='none')erpChips.append(el('span','Source: '+(i.source==='studio'?'Saved in studio':'Host env'),'status-chip'));
       if(i.lastCheck)erpChips.append(el('span','Last check: '+i.lastCheck.status+' · '+stamp(i.lastCheck.at),'status-chip'));
       if(i.lastSync)erpChips.append(el('span','Last sync: '+i.lastSync.sent+' sent, '+i.lastSync.updated+' updated, '+i.lastSync.pricesUpdated+' prices · '+stamp(i.lastSync.at),'status-chip'));
+      if(i.lastWebhook)erpChips.append(el('span','Last webhook: '+i.lastWebhook.event+' · '+stamp(i.lastWebhook.at),'status-chip'));
       erpBox.append(erpChips,el('p','Connect your ServiceHub ERP API URL and integration key below. New quotes, status changes, and periodic updates sync automatically when Auto-sync is on, or click Push & Sync All anytime.'));
       const erpGrid=el('div',undefined,'fields');erpBox.append(erpGrid);
       const urlIn=field(erpGrid,'ServiceHub API URL',i.apiUrl||'','url');urlIn.placeholder='https://servicehub-client.onrender.com/api/v1/your-company';
@@ -135,6 +136,11 @@
         },'secondary'));
       }
       buttons(erpBox,...erpActs);
+      if(i.webhookSecret){
+        const whUrl=location.origin+'/api/erp/webhook?token='+i.webhookSecret;
+        const whField=field(erpBox,'Website Webhook URL (paste into ServiceHub ERP)',whUrl);whField.readOnly=true;
+        buttons(erpBox,button('Copy webhook URL',async()=>{try{await navigator.clipboard.writeText(whUrl);notice.textContent='Website Webhook URL copied.'}catch{whField.select();notice.textContent='Select and copy the Webhook URL above.'}},'secondary'));
+      }
       if(i.portal){const a=el('a','Open ServiceHub customer login');a.href=i.portal;erpBox.append(a);for(const [label,key] of [['Stripe test webhook','stripeTest'],['Stripe live webhook','stripeLive']]){const f=field(erpBox,label,i[key]);f.readOnly=true}}
     };
     drawErp(cfg.integrations||{});

@@ -419,6 +419,21 @@ test('Traffic source & device attribution tracks visits, compares platforms in a
     assert.equal(skipped.skipped,true);
     const autoOn=await (await call('/api/admin/erp',{admin:true,config:erpCfg,post:{action:'auto-sync',enabled:true}})).json();
     assert.equal(autoOn.autoSync,true);
+    assert.ok(autoOn.webhookSecret);
+
+    // Incoming ERP webhook authenticates by ?token=..., updates status & service prices without Origin header
+    const badWh=await worker.fetch(new Request(origin+'/api/erp/webhook?token=wrong',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({event:'ping'})}),erpCfg);
+    assert.equal(badWh.status,401);
+    const okWh=await worker.fetch(new Request(origin+'/api/erp/webhook?token='+autoOn.webhookSecret,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({event:'request.updated',id:888,status:'Completed',services:[{name:'AC maintenance',rate:550}]})}),erpCfg);
+    assert.equal(okWh.status,200);
+    const whJson=await okWh.json();
+    assert.equal(whJson.ok,true);
+    assert.equal(whJson.statusUpdated,1);
+    assert.equal(whJson.pricesUpdated,1);
+    const whQuote=await store.get('request/unsent-1');
+    assert.equal(whQuote.data.status,'Completed');
+    const whSet=await store.get('settings');
+    assert.equal(Object.values(whSet.data.live.pricing).find(x=>x.name==='AC maintenance')?.rate,550);
   }finally{globalThis.fetch=original}
 });
 
