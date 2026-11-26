@@ -59,6 +59,7 @@
       const entries=el('div');panel.append(entries);
       function addItem(kind){const id='custom-'+crypto.randomUUID().replaceAll('-','');data.pricing[id]={kind,name:'',rate:0,description:'',unit:'Units',sectors:['residential','commercial','industrial']};dirty=true;draw(id)}
       bar.append(button('Add service',()=>addItem('service'),'primary'),button('Add AMC plan',()=>addItem('plan')));
+      if(cfg.integrations?.canSync)bar.append(button('Pull prices from ERP',async()=>{const res=await api('erp',{action:'pull-pricing'});notice.textContent=res.message||'Pulled service prices.';await open('rates')},'secondary'));
       function draw(focus){
         entries.replaceChildren();for(const [kind,label] of [['service','Service rates'],['plan','AMC plans']]){
           const block=card(entries,label);
@@ -112,6 +113,10 @@
       },'primary')];
       if(i.portal||i.canSync||i.paused){
         if(!i.paused)erpActs.push(button('Verify connection',async()=>{const next=await api('erp',{action:'test'});drawErp(next);notice.textContent='ERP connection check: '+(next.lastCheck?.status||'Done')+'.'},'secondary'));
+        if(!i.paused&&i.canSync){
+          erpActs.push(button('Push unsent quotes to ERP',async()=>{const res=await api('erp',{action:'push-all'});if(res.state)drawErp(res.state);notice.textContent='Pushed '+res.sent+' of '+res.total+' unsent quotes'+(res.failed?' ('+res.failed+' failed: '+(res.errors?.[0]||'')+')':'.')},'secondary'));
+          erpActs.push(button('Pull prices from ERP',async()=>{const res=await api('erp',{action:'pull-pricing'});notice.textContent=res.message||'Pulled service prices.'},'secondary'));
+        }
         erpActs.push(button(i.paused?'Reconnect ERP':'Disconnect ERP',async()=>{
           const next=await api('erp',{action:i.paused?'reconnect':'disconnect'});
           drawErp(next);notice.textContent=next.paused?'ServiceHub ERP sync disconnected.':'ServiceHub ERP sync re-enabled.';
@@ -515,6 +520,7 @@
       a.href=url;a.download='servicebay-requests.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),10000);
     },'secondary');
     queue.insertBefore(csvBtn,list);
+    if(cfg.integrations?.canSync){const pushBtn=button('Push unsent to ERP',async()=>{const res=await api('erp',{action:'push-all'});notice.textContent='Pushed '+res.sent+' of '+res.total+' unsent quotes'+(res.failed?' ('+res.failed+' failed: '+(res.errors?.[0]||'')+')':'.');await open('inbox')},'secondary');queue.insertBefore(pushBtn,list)}
     tools.onsubmit=e=>{e.preventDefault();query=search.value.trim();stage=filter.value==='All statuses'?'':filter.value;refresh().catch(e=>notice.textContent=e.message)};filter.onchange=()=>tools.requestSubmit();
     async function refresh(more=false){
       const seq=++revision,params=new URLSearchParams({q:query,status:stage});if(more&&cursor)params.set('cursor',cursor);

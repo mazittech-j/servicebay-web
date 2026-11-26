@@ -65,16 +65,19 @@ async function sync(env,store,key) {
   if(creds.paused)fail('ServiceHub ERP sync is disconnected in Studio > Integrations.',503);
   if(!base.canSync)fail('Add the ServiceHub API URL and integration key to enable delivery.',503);
   const r=entry.data,c=createServiceHubClient({baseUrl:creds.apiUrl,apiKey:creds.apiKey});
+  const extId=r.external||r.receipt||key.replace(/[^A-Za-z0-9_.:-]/g,'-');
   const attr=[r.source?'Source: '+r.source:'',r.medium?'Medium: '+r.medium:'',r.campaign?'Campaign: '+r.campaign:'',r.device?'Device: '+r.device:''].filter(Boolean).join(' | ');
-  const fullMsg=attr?(r.message+'\n\n['+attr+']'):r.message;
+  const baseMsg=r.message||'';
+  const fullMsg=attr?(baseMsg?baseMsg+'\n\n['+attr+']':'['+attr+']'):baseMsg;
   let response;
-  try{response=await c.submit('enquiries',r.external,{external_id:r.external,name:r.name,email:r.email,phone:r.phone,message:fullMsg,source:r.source||'Direct',medium:r.medium||'',campaign:r.campaign||'',device:r.device||'',service:r.service||'',area:r.area||'',property:r.property||'',country:r.country||''})}catch(err){
+  try{response=await c.submit('enquiries',extId,{external_id:extId,name:r.name,email:r.email,phone:r.phone,message:fullMsg,source:r.source||'Direct',medium:r.medium||'',campaign:r.campaign||'',device:r.device||'',service:r.service||'',area:r.area||'',property:r.property||'',country:r.country||''})}catch(err){
     if(err?.status===401||err?.status===403){try{const row=await store.get('security/erp');await store.save('security/erp',{...row.data,lastCheck:{status:'Revoked / Unauthorized ('+err.status+')',at:new Date().toISOString()}},row.version)}catch{}}
     fail(err?.message||'ServiceHub did not confirm delivery. The request is saved and can be retried.',502);
   }
-  if(!Number.isSafeInteger(Number(response?.id))||Number(response.id)<1)fail('ServiceHub returned an unrecognised receipt. Retry using the same request.',502);
+  const erpId=Number(response?.id??response?.enquiry?.id??response?.service_request?.id??response?.lead?.id);
+  if(!Number.isSafeInteger(erpId)||erpId<1)fail('ServiceHub returned an unrecognised receipt. Retry using the same request.',502);
   // Another administrator can change status while the external call is in progress.
-  for(let n=0;n<3;n++){const next=await store.get(key);if(next.data.erpId)return next;try{const upd={...next.data,erpId:Number(response.id)};delete upd.erpError;await store.save(key,upd,next.version,event('Quotes','Sent quote to ServiceHub',r.service||'Service quote'));return await store.get(key)}catch(e){if(e.status!==409)throw e}}
+  for(let n=0;n<3;n++){const next=await store.get(key);if(next.data.erpId)return next;try{const upd={...next.data,erpId};delete upd.erpError;await store.save(key,upd,next.version,event('Quotes','Sent quote to ServiceHub',r.service||'Service quote'));return await store.get(key)}catch(e){if(e.status!==409)throw e}}
   fail('Reload and retry delivery.',409);
 }
 function assetResponse(entry){const [type,zipped,source]=entry;const buffer=bytes(source);let stream=buffer;if(zipped)stream=new Blob([buffer]).stream().pipeThrough(new DecompressionStream('gzip'));return new Response(stream,{headers:{'Content-Type':type+(type.startsWith('text/')?'; charset=utf-8':''),'X-Content-Type-Options':'nosniff','Cache-Control':type==='text/html'?'private, no-store':'private, max-age=300'}})}
@@ -207,6 +210,68 @@ export async function serve(request,env,store,platform){
           }catch{status='Connection timeout'}
           await store.save('security/erp',{...cur,lastCheck:{status,at:new Date().toISOString()}},row.version,event('Website','Tested ServiceHub ERP connection',status));
           return json(await erpState(store,env));
+        }
+        if(input.action==='push-all'){
+          const creds=await erpCredentials(store,env),base=parseErpUrl(creds.apiUrl,creds.apiKey);
+          if(creds.paused)fail('ServiceHub ERP sync is disconnected in Studio > Integrations.',503);
+          if(!base.canSync)fail('Add a ServiceHub API URL and API key first.',409);
+          let cursor='request/~',unsent=[];
+          do{
+            const page=await store.inbox(cursor);
+            for(const r of page.items||[]){if(!r.erpId)unsent.push(r);if(unsent.length>=100)break}
+            cursor=page.next;
+          }while(cursor&&unsent.length<100);
+          let sent=0,failed=0;const errors=[];
+          for(const r of unsent){
+            try{await sync(env,store,r.key);sent++}catch(err){
+              failed++;
+              if(errors.length<5)errors.push((r.external||r.key)+': '+(err?.message||'Sync failed'));
+              try{const curRow=await store.get(r.key);if(curRow.data&&!curRow.data.erpId)await store.save(r.key,{...curRow.data,erpError:txt(err?.message||'Sync failed',240)},curRow.version)}catch{}
+            }
+          }
+          return json({total:unsent.length,sent,failed,errors,state:await erpState(store,env)});
+        }
+        if(input.action==='pull-pricing'){
+          const creds=await erpCredentials(store,env),base=parseErpUrl(creds.apiUrl,creds.apiKey);
+          if(creds.paused)fail('ServiceHub ERP sync is disconnected in Studio > Integrations.',503);
+          if(!base.canSync)fail('Add a ServiceHub API URL and API key first.',409);
+          const client=createServiceHubClient({baseUrl:creds.apiUrl,apiKey:creds.apiKey});
+          const list=await client.listServices();
+          if(list===null)fail('No /services, /pricing, or /catalog endpoint found on ServiceHub ERP.',404);
+          const srow=await store.get('settings');
+          const curSet=srow.data||{draft:defaults,live:defaults};
+          const draft=structuredClone(curSet.draft||defaults),live=structuredClone(curSet.live||defaults);
+          draft.pricing=draft.pricing||structuredClone(defaults.pricing);
+          live.pricing=live.pricing||structuredClone(defaults.pricing);
+          let updatedCount=0;
+          for(const item of list){
+            if(!item||typeof item!=='object')continue;
+            const name=txt(item.name||item.title||item.service_name||'',80);
+            const rate=Number(item.rate??item.price??item.unit_price??item.amount??0);
+            if(!Number.isFinite(rate)||rate<=0)continue;
+            const slug=item.slug?String(item.slug):'';
+            const idKey=item.id?String(item.id):'';
+            let matchKey=slug&&draft.pricing[slug]?slug:(idKey&&draft.pricing[idKey]?idKey:'');
+            if(!matchKey&&name){
+              const norm=name.toLowerCase();
+              matchKey=Object.keys(draft.pricing).find(k=>(draft.pricing[k]?.name||'').trim().toLowerCase()===norm)||'';
+            }
+            if(matchKey){
+              draft.pricing[matchKey]={...draft.pricing[matchKey],rate,name:name||draft.pricing[matchKey].name};
+              if(live.pricing[matchKey])live.pricing[matchKey]={...live.pricing[matchKey],rate,name:name||live.pricing[matchKey].name};
+              else live.pricing[matchKey]=structuredClone(draft.pricing[matchKey]);
+              updatedCount++;
+            }else if(name){
+              const newKey='custom-'+crypto.randomUUID().replaceAll('-','');
+              const entry={kind:item.kind==='plan'?'plan':'service',name,rate,description:txt(item.description||'',300),unit:txt(item.unit||'Units',30),sectors:Array.isArray(item.sectors)&&item.sectors.length?item.sectors:['residential','commercial','industrial']};
+              draft.pricing[newKey]=entry;
+              live.pricing[newKey]=structuredClone(entry);
+              updatedCount++;
+            }
+          }
+          const saved={draft:cleanSettings(draft),live:cleanSettings(live)};
+          await store.save('settings',saved,srow.version,event('Website','Pulled service prices from ERP',updatedCount+' updated'));
+          return json({updatedCount,total:list.length,message:updatedCount?('Updated '+updatedCount+' service prices from ServiceHub ERP.'):'No service prices with valid rates (> 0) found in ERP.'});
         }
         fail('Unknown ERP action.');
       }

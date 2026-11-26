@@ -385,6 +385,32 @@ test('Traffic source & device attribution tracks visits, compares platforms in a
     assert.equal(del.canSync,false);assert.equal(del.source,'none');
     const saved=await (await call('/api/admin/erp',{admin:true,config:erpCfg,post:{action:'save',apiUrl:'https://erp.new/api/v1/new-co',apiKey:'shw_'+'c'.repeat(43)}})).json();
     assert.equal(saved.canSync,true);assert.equal(saved.source,'studio');assert.match(saved.portal,/new-co/);
+
+    // ERP sync accepts {enquiry:{id}}, push-all pushes unsent quotes, and pull-pricing updates catalog rates
+    const unsentKey=await store.save('request/unsent-1',{external:'unsent-1',name:'Bulk User',email:'bulk@example.com',phone:'+971500000011',message:'Need AC service',service:'AC maintenance',source:'Google',status:'New'},0);
+    assert.ok(unsentKey);
+    globalThis.fetch=async(url,opts)=>{
+      const u=String(url);
+      if(u.includes('/enquiries')){
+        return new Response(JSON.stringify({success:true,data:{enquiry:{id:888}}}),{status:201,headers:{'Content-Type':'application/json'}});
+      }
+      if(u.endsWith('/services')){
+        return new Response(JSON.stringify({success:true,data:[{id:'ac',name:'AC maintenance',rate:499,kind:'service'},{id:'erp-solar',name:'Solar panel cleaning',rate:350,kind:'service',unit:'Panels'}]}),{status:200,headers:{'Content-Type':'application/json'}});
+      }
+      return new Response('Not found',{status:404});
+    };
+    const pushed=await (await call('/api/admin/erp',{admin:true,config:erpCfg,post:{action:'push-all'}})).json();
+    assert.equal(pushed.sent>=1,true);
+    assert.equal(pushed.failed,0);
+    const updatedQuote=await store.get('request/unsent-1');
+    assert.equal(updatedQuote.data.erpId,888);
+
+    const pulled=await (await call('/api/admin/erp',{admin:true,config:erpCfg,post:{action:'pull-pricing'}})).json();
+    assert.equal(pulled.updatedCount,2);
+    const setRow=await store.get('settings');
+    assert.equal(Object.values(setRow.data.draft.pricing).find(x=>x.name==='AC maintenance')?.rate,499);
+    assert.equal(Object.values(setRow.data.live.pricing).find(x=>x.name==='AC maintenance')?.rate,499);
+    assert.equal(Object.values(setRow.data.draft.pricing).find(x=>x.name==='Solar panel cleaning')?.rate,350);
   }finally{globalThis.fetch=original}
 });
 
