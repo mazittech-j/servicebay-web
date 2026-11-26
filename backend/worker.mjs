@@ -173,7 +173,14 @@ export async function serve(request,env,store,platform){
             iv=btoa(String.fromCharCode(...ivBytes));
             secret=btoa(String.fromCharCode(...new Uint8Array(enc)));
           }else if(!secret)fail('Enter your ServiceHub API key.');
-          await store.save('security/erp',{apiUrl,iv,secret,paused:false,deleted:false,lastCheck:null},row.version,event('Website','Saved ServiceHub ERP connection',apiUrl));
+          let checkStatus='Unreachable';
+          try{
+            const res=await fetch(apiUrl+'/requests/999999999',{headers:{Authorization:'Bearer '+(apiKey||((await erpCredentials(store,env)).apiKey))},signal:AbortSignal.timeout(12000),redirect:'error'});
+            if(res.status===401||res.status===403)checkStatus='Revoked / Unauthorized ('+res.status+')';
+            else if(res.ok||res.status===404||res.status===400)checkStatus='Connected';
+            else checkStatus='Provider error ('+res.status+')';
+          }catch{checkStatus='Connection timeout'}
+          await store.save('security/erp',{apiUrl,iv,secret,paused:false,deleted:false,lastCheck:{status:checkStatus,at:new Date().toISOString()}},row.version,event('Website','Saved ServiceHub ERP connection',apiUrl+' · '+checkStatus));
           return json(await erpState(store,env));
         }
         if(input.action==='delete'){
@@ -309,7 +316,7 @@ export async function serve(request,env,store,platform){
     if(path==='/api/admin/request'&&method==='POST'){
       const x=await body(request);if(!/^request\/\d{15}-[a-f0-9]{40}$/.test(x.key))fail('Invalid request.');
       if(x.action==='email')return json({status:await sendReceipt(store,env,x.key,u.origin)});
-      if(x.action==='sync'){await sync(env,store,x.key);return json({ok:true})}
+      if(x.action==='sync'){try{await sync(env,store,x.key)}catch(err){try{const cur=await store.get(x.key);if(cur.data&&!cur.data.erpId)await store.save(x.key,{...cur.data,erpError:String(err?.message||'Sync failed').slice(0,200)},cur.version)}catch{}throw err}return json({ok:true})}
       if(!statuses.includes(x.status))fail('Invalid status.');
       const row=await store.get(x.key);if(!row.data)fail('Request not found.',404);
       if(x.previous!==row.data.status)fail('Status changed. Reload and retry.',409);
