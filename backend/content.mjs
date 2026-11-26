@@ -3,7 +3,7 @@ import {catalog,addCustomToPage} from './catalog.mjs';
 import {pricing} from './generated.mjs';
 import {parseHTML} from 'linkedom';
 export const EMPTY_PAGE={title:'',description:'',changes:{},sections:[],hidden:[]};
-export const defaults={pricing,typography:{},name:'ServiceBay',logo:'/assets/servicebay-wordmark.webp',hours:'Mon–Sat, 8:00 AM–6:00 PM',phone:'+971562014647',whatsapp:'971562014647',email:'maz.ittech@gmail.com',address:'Office 410, Opal Tower, Business Bay, Dubai, United Arab Emirates',font:'Site default',size:16,color:'#ac3212',paper:'#f9f8f5',ink:'#191917',dark:'#211f1c',tint:'#f0ede6',muted:'#55534e',line:'#dedbd4',ga:'',ads:'',pixel:'',verification:''};
+export const defaults={pricing,typography:{},name:'ServiceBay',logo:'/assets/servicebay-wordmark.webp',hours:'Mon–Sat, 8:00 AM–6:00 PM',phone:'+971562014647',whatsapp:'971562014647',email:'maz.ittech@gmail.com',address:'Office 410, Opal Tower, Business Bay, Dubai, United Arab Emirates',font:'Site default',size:16,color:'#ac3212',paper:'#f9f8f5',ink:'#191917',dark:'#211f1c',tint:'#f0ede6',muted:'#55534e',line:'#dedbd4',ga:'',ads:'',pixel:'',tiktok:'',gtm:'',verification:''};
 export const fonts=['Site default','Segoe UI','Arial','Georgia','Verdana','Tahoma'];
 export const fail=(message,status=400)=>{throw Object.assign(new Error(message),{status})};
 export function txt(value,max=3000){if(typeof value!=='string'||value.length>max)fail('Check field length.');return value.trim()}
@@ -16,7 +16,7 @@ export function cleanSettings(x){
   out.logo=imageUrl(out.logo);
   if(!out.name||!out.address||!/^(\+)[1-9]\d{6,14}$/.test(out.phone)||!/^[1-9]\d{6,14}$/.test(out.whatsapp)||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(out.email))fail('Check company name, address, email and international numbers.');
   if(!fonts.includes(out.font)||!Number.isInteger(out.size)||out.size<14||out.size>24||![out.color,out.paper,out.ink,out.dark,out.tint,out.muted,out.line].every(v=>/^#[a-f\d]{6}$/i.test(v)))fail('Check your theme settings.');
-  for(const [key,re] of [['ga',/^G-[A-Z0-9]+$/],['ads',/^AW-\d+$/],['pixel',/^\d{6,25}$/],['verification',/^[\w-]+$/]])if(out[key]&&!re.test(out[key]))fail('Invalid '+key+' ID.');
+  for(const [key,re] of [['ga',/^G-[A-Z0-9]+$/],['ads',/^AW-\d+$/],['pixel',/^\d{6,25}$/],['tiktok',/^[A-Z0-9]{10,30}$/],['gtm',/^GTM-[A-Z0-9]+$/],['verification',/^[\w-]+$/]])if(out[key]&&!re.test(out[key]))fail('Invalid '+key+' ID.');
   return out;
 }
 export function cleanPage(x){
@@ -96,6 +96,6 @@ export function renderPage(html,settings,page,editing=false){
   const font=s.font==='Site default'?'':';--sans:"'+s.font+'",sans-serif';
   css(d,':root{--accent:'+s.color+';--paper:'+s.paper+';--ink:'+s.ink+';--dark:'+(s.dark||defaults.dark)+';--tint:'+(s.tint||defaults.tint)+';--muted:'+(s.muted||defaults.muted)+';--line:'+(s.line||defaults.line)+font+';font-size:'+s.size/16*100+'%}.cms-section{max-width:78rem}.cms-section p{max-width:70ch;margin:1rem 0}.cms-section img{max-height:30rem;border-radius:1rem}'+(editing?'[data-studio-field]:hover{outline:2px dashed #d54517;cursor:crosshair}[data-studio-hidden]{opacity:.35}':''));
   const roleCSS=typographyCSS(s.typography,s.size);if(roleCSS)css(d,roleCSS);
-  if(!editing&&(s.ga||s.ads||s.pixel)){for(const el of d.querySelectorAll('script[src="/analytics.js"],.analytics-settings,.analytics-choices'))el.remove();const script=d.createElement('script');script.setAttribute('src','/studio-tracking.js');script.setAttribute('defer','');for(const k of ['ga','ads','pixel'])script.setAttribute('data-'+k,s[k]);d.body.append(script)}
+  if(!editing&&(s.ga||s.ads||s.pixel||s.tiktok||s.gtm)){for(const el of d.querySelectorAll('script[src="/analytics.js"],.analytics-settings,.analytics-choices'))el.remove();const script=d.createElement('script');script.setAttribute('src','/studio-tracking.js');script.setAttribute('defer','');for(const k of ['ga','ads','pixel','tiktok','gtm'])if(s[k])script.setAttribute('data-'+k,s[k]);d.body.append(script)}
   return d.toString();
 }

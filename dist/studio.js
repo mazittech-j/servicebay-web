@@ -91,7 +91,7 @@
       actions(panel);return;
     }
     const c=card(panel,'Measurement & verification');c.append(el('p','Measurement starts after a visitor allows it. Leave an ID empty to disable that integration.'));const g=el('div',undefined,'fields');c.append(g);
-    for(const [key,label] of Object.entries({ga:'Google Analytics 4 measurement ID',ads:'Google Ads tag ID',pixel:'Meta Pixel ID',verification:'Search Console verification token'}))bind(field(g,label,data[key]),key);actions(c);
+    for(const [key,label] of Object.entries({ga:'Google Analytics 4 measurement ID',ads:'Google Ads tag ID',pixel:'Meta Pixel ID (Facebook / Instagram)',tiktok:'TikTok Pixel ID',gtm:'Google Tag Manager ID',verification:'Search Console verification token'}))bind(field(g,label,data[key]),key);actions(c);
     const conn=card(panel,'ServiceHub ERP & payments');
     const erpBox=el('div');conn.append(erpBox);
     const drawErp=(i)=>{

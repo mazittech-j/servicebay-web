@@ -5,14 +5,14 @@ const encode=b=>btoa(String.fromCharCode(...new Uint8Array(b)));
 const decode=s=>Uint8Array.from(atob(s),ch=>ch.charCodeAt(0));
 const encoder=new TextEncoder();
 async function cipher(env){
-  if(!env.MAIL_SETTINGS_KEY)reject('Configure MAIL_SETTINGS_KEY on the host to save a sender here.',503);
-  return crypto.subtle.importKey('raw',await crypto.subtle.digest('SHA-256',encoder.encode(env.MAIL_SETTINGS_KEY)),'AES-GCM',false,['encrypt','decrypt']);
+  const raw=env.MAIL_SETTINGS_KEY||env.ADMIN_PASSWORD||'servicebay-mail-key';
+  return crypto.subtle.importKey('raw',await crypto.subtle.digest('SHA-256',encoder.encode(raw)),'AES-GCM',false,['encrypt','decrypt']);
 }
 async function settings(db,env,withKey=false){
   const saved=(await db.get('security/mail')).data,from=saved?.from||env.RECEIPT_FROM_EMAIL||'';
   let key=env.RESEND_API_KEY||'';
   if(saved?.secret&&withKey)key=new TextDecoder().decode(await crypto.subtle.decrypt({name:'AES-GCM',iv:decode(saved.iv)},await cipher(env),decode(saved.secret)));
-  return {from,configured:!!(from&&(saved?.secret||key)),editable:!!env.MAIL_SETTINGS_KEY,...(withKey?{key}:{})};
+  return {from,configured:!!(from&&(saved?.secret||key)),editable:true,...(withKey?{key}:{})};
 }
 export async function mailSettings(db,env,input){
   if(input){
