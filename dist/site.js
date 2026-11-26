@@ -381,7 +381,8 @@ for (const form of enquiryForms) {
       try{
         if(!receipt)receipt='SB-'+Date.now().toString(36).toUpperCase()+'-'+crypto.randomUUID().replaceAll('-','').toUpperCase();
         const res=await fetch('/api/portal/requests',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:receipt,name:value('name'),email:value('email'),phone:value('mobile'),service,serviceId:value('service'),planId:value('plan'),plan:value('plan')?plan.selectedOptions[0].textContent:'',area:value('area'),property:value('property'),country:siteRegions[country.value].name,details:value('details'),...siteAttribution,password:values.get('portalPassword')||'',website:value('website'),message})});
-        const r=await res.json();if(!res.ok)throw Error(r.error||'Please try again.');
+        let r={};try{r=await res.json()}catch{}
+        if(!res.ok)throw Error(r.error||'Could not submit the request ('+res.status+'). Please try again.');
         sent=true;submit.disabled=true;review.hidden=true;try{sessionStorage.setItem('servicebay-receipt',r.code)}catch{}
         const a=document.createElement('a');a.href='/portal/';a.textContent='Track in customer portal';
         if(fields.portalPassword)fields.portalPassword.value='';

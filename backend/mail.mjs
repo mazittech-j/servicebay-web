@@ -61,7 +61,7 @@ export async function sendReceipt(db,env,key,siteOrigin){
   const message={from:'ServiceBay <'+m.from+'>',to:[intent.email],subject:'Your ServiceBay quote request receipt',text:'We received your '+(intent.service||'service')+' request.\n\nYour private receipt code is '+intent.receipt+'\n\nOpen your customer portal: '+m.link+'\n\nKeep this receipt private.\nServiceBay Technical Services'};
   let status='Sending',id;
   try{
-    const result=await fetch('https://api.resend.com/emails',{method:'POST',redirect:'error',signal:AbortSignal.timeout(8000),headers:{Authorization:'Bearer '+config.key,'Content-Type':'application/json','Idempotency-Key':intent.external+'-receipt-'+m.attempt},body:JSON.stringify(message)});
+    const result=await fetch('https://api.resend.com/emails',{method:'POST',redirect:'error',signal:AbortSignal.timeout(4000),headers:{Authorization:'Bearer '+config.key,'Content-Type':'application/json','Idempotency-Key':intent.external+'-receipt-'+m.attempt},body:JSON.stringify(message)});
     if(result.ok){const response=await result.json();if(response.id){status='Accepted';id=response.id}}
     else if(result.status>=400&&result.status<500&&![408,409,429].includes(result.status))status='Rejected';
   }catch{/* The same key can be safely retried inside the provider's time window. */}
