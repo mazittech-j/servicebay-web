@@ -6,6 +6,7 @@ export function createServiceHubClient({baseUrl,apiKey,fetcher=fetch}){
  return {
   submit:(kind,externalId,data)=>{if(!['enquiries','bookings'].includes(kind))throw Error('Choose enquiries or bookings.');if(!externalId)throw Error('External reference required.');return call('/'+kind,{method:'POST',data,key:externalId})},
   status:id=>{if(!Number.isSafeInteger(Number(id))||Number(id)<1)throw Error('Valid request ID required.');return call('/requests/'+Number(id))},
+  updateStatus:async(id,data)=>{if(!Number.isSafeInteger(Number(id))||Number(id)<1)return {unsupported:true};for(const p of ['/requests/'+Number(id),'/enquiries/'+Number(id)]){try{return await call(p,{method:'PATCH',data})}catch(e){if(e.status===404||e.status===405)continue;throw e}}return {unsupported:true}},
   listServices:async()=>{for(const p of ['/services','/pricing','/catalog']){try{const res=await call(p);const list=Array.isArray(res)?res:(res?.services||res?.items||res?.pricing||res?.catalog);if(Array.isArray(list))return list}catch(e){if(e.status===401||e.status===403)throw e}}return null}
  };
 }

@@ -399,18 +399,26 @@ test('Traffic source & device attribution tracks visits, compares platforms in a
       }
       return new Response('Not found',{status:404});
     };
-    const pushed=await (await call('/api/admin/erp',{admin:true,config:erpCfg,post:{action:'push-all'}})).json();
+    const pushed=await (await call('/api/admin/erp',{admin:true,config:erpCfg,post:{action:'sync-all'}})).json();
     assert.equal(pushed.sent>=1,true);
     assert.equal(pushed.failed,0);
+    assert.equal(pushed.pricesUpdated,2);
+    assert.equal(pushed.state.lastSync.pricesUpdated,2);
     const updatedQuote=await store.get('request/unsent-1');
     assert.equal(updatedQuote.data.erpId,888);
 
-    const pulled=await (await call('/api/admin/erp',{admin:true,config:erpCfg,post:{action:'pull-pricing'}})).json();
-    assert.equal(pulled.updatedCount,2);
     const setRow=await store.get('settings');
     assert.equal(Object.values(setRow.data.draft.pricing).find(x=>x.name==='AC maintenance')?.rate,499);
     assert.equal(Object.values(setRow.data.live.pricing).find(x=>x.name==='AC maintenance')?.rate,499);
     assert.equal(Object.values(setRow.data.draft.pricing).find(x=>x.name==='Solar panel cleaning')?.rate,350);
+
+    // Auto-sync toggle and auto-tick work
+    const autoOff=await (await call('/api/admin/erp',{admin:true,config:erpCfg,post:{action:'auto-sync',enabled:false}})).json();
+    assert.equal(autoOff.autoSync,false);
+    const skipped=await (await call('/api/admin/erp',{admin:true,config:erpCfg,post:{action:'auto-tick'}})).json();
+    assert.equal(skipped.skipped,true);
+    const autoOn=await (await call('/api/admin/erp',{admin:true,config:erpCfg,post:{action:'auto-sync',enabled:true}})).json();
+    assert.equal(autoOn.autoSync,true);
   }finally{globalThis.fetch=original}
 });
 

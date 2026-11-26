@@ -59,7 +59,6 @@
       const entries=el('div');panel.append(entries);
       function addItem(kind){const id='custom-'+crypto.randomUUID().replaceAll('-','');data.pricing[id]={kind,name:'',rate:0,description:'',unit:'Units',sectors:['residential','commercial','industrial']};dirty=true;draw(id)}
       bar.append(button('Add service',()=>addItem('service'),'primary'),button('Add AMC plan',()=>addItem('plan')));
-      if(cfg.integrations?.canSync)bar.append(button('Pull prices from ERP',async()=>{const res=await api('erp',{action:'pull-pricing'});notice.textContent=res.message||'Pulled service prices.';await open('rates')},'secondary'));
       function draw(focus){
         entries.replaceChildren();for(const [kind,label] of [['service','Service rates'],['plan','AMC plans']]){
           const block=card(entries,label);
@@ -103,10 +102,15 @@
       erpChips.append(el('span','Database: '+cfg.storage,'status-chip'),el('span','ERP sync: '+syncLabel,'status-chip'));
       if(i.source&&i.source!=='none')erpChips.append(el('span','Source: '+(i.source==='studio'?'Saved in studio':'Host env'),'status-chip'));
       if(i.lastCheck)erpChips.append(el('span','Last check: '+i.lastCheck.status+' · '+stamp(i.lastCheck.at),'status-chip'));
-      erpBox.append(erpChips,el('p','Connect your ServiceHub ERP API URL and integration key below (or via host environment variables).'));
+      if(i.lastSync)erpChips.append(el('span','Last sync: '+i.lastSync.sent+' sent, '+i.lastSync.updated+' updated, '+i.lastSync.pricesUpdated+' prices · '+stamp(i.lastSync.at),'status-chip'));
+      erpBox.append(erpChips,el('p','Connect your ServiceHub ERP API URL and integration key below. New quotes, status changes, and periodic updates sync automatically when Auto-sync is on, or click Push & Sync All anytime.'));
       const erpGrid=el('div',undefined,'fields');erpBox.append(erpGrid);
       const urlIn=field(erpGrid,'ServiceHub API URL',i.apiUrl||'','url');urlIn.placeholder='https://servicehub-client.onrender.com/api/v1/your-company';
       const keyIn=secret(erpGrid,'ServiceHub API key',i.canSync||i.paused?'Leave blank to keep current key, or paste new shw_…':'shw_…');
+      const autoWrap=el('label',undefined,'check');const autoIn=el('input');autoIn.type='checkbox';autoIn.checked=i.autoSync!==false;
+      autoIn.onchange=async()=>{const next=await api('erp',{action:'auto-sync',enabled:autoIn.checked});drawErp(next);notice.textContent=next.autoSync?'ServiceHub auto-sync enabled.':'ServiceHub auto-sync paused.'};
+      autoWrap.append(autoIn,document.createTextNode(' Auto-sync new quotes, status changes & periodic catch-up'));
+      erpBox.append(autoWrap);
       const erpActs=[button('Save ERP connection',async()=>{
         const next=await api('erp',{action:'save',apiUrl:urlIn.value,apiKey:keyIn.value});
         dirty=false;drawErp(next);notice.textContent='ServiceHub ERP connection saved.';
@@ -114,8 +118,11 @@
       if(i.portal||i.canSync||i.paused){
         if(!i.paused)erpActs.push(button('Verify connection',async()=>{const next=await api('erp',{action:'test'});drawErp(next);notice.textContent='ERP connection check: '+(next.lastCheck?.status||'Done')+'.'},'secondary'));
         if(!i.paused&&i.canSync){
-          erpActs.push(button('Push unsent quotes to ERP',async()=>{const res=await api('erp',{action:'push-all'});if(res.state)drawErp(res.state);notice.textContent='Pushed '+res.sent+' of '+res.total+' unsent quotes'+(res.failed?' ('+res.failed+' failed: '+(res.errors?.[0]||'')+')':'.')},'secondary'));
-          erpActs.push(button('Pull prices from ERP',async()=>{const res=await api('erp',{action:'pull-pricing'});notice.textContent=res.message||'Pulled service prices.'},'secondary'));
+          erpActs.push(button('Push & Sync All',async()=>{
+            const res=await api('erp',{action:'sync-all'});
+            if(res.state)drawErp(res.state);
+            notice.textContent='Synced: '+res.sent+' quotes sent, '+(res.updated||0)+' statuses updated, '+(res.pricesUpdated||0)+' prices pulled'+(res.failed?' ('+res.failed+' failed: '+(res.errors?.[0]||'')+')':'.');
+          },'secondary'));
         }
         erpActs.push(button(i.paused?'Reconnect ERP':'Disconnect ERP',async()=>{
           const next=await api('erp',{action:i.paused?'reconnect':'disconnect'});
@@ -520,7 +527,6 @@
       a.href=url;a.download='servicebay-requests.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),10000);
     },'secondary');
     queue.insertBefore(csvBtn,list);
-    if(cfg.integrations?.canSync){const pushBtn=button('Push unsent to ERP',async()=>{const res=await api('erp',{action:'push-all'});notice.textContent='Pushed '+res.sent+' of '+res.total+' unsent quotes'+(res.failed?' ('+res.failed+' failed: '+(res.errors?.[0]||'')+')':'.');await open('inbox')},'secondary');queue.insertBefore(pushBtn,list)}
     tools.onsubmit=e=>{e.preventDefault();query=search.value.trim();stage=filter.value==='All statuses'?'':filter.value;refresh().catch(e=>notice.textContent=e.message)};filter.onchange=()=>tools.requestSubmit();
     async function refresh(more=false){
       const seq=++revision,params=new URLSearchParams({q:query,status:stage});if(more&&cursor)params.set('cursor',cursor);
@@ -555,7 +561,7 @@
 
   document.querySelector('#navigation').onclick=e=>{const n=e.target.closest('[data-tab]');if(n&&discard())open(n.dataset.tab).catch(e=>notice.textContent=e.message)};
   by('studio-logout').onclick=async()=>{if(!discard())return;try{const res=await fetch('/api/studio-auth/logout',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});if(!res.ok)throw Error('Sign out failed.');dirty=false;location.replace('/admin/')}catch(e){notice.textContent=e.message}};
-  const IDLE_MS=1800000;let lastActive=Date.now(),lastPing=Date.now();
+  const IDLE_MS=1800000;let lastActive=Date.now(),lastPing=Date.now(),lastAutoSync=Date.now();
   const markActive=()=>{lastActive=Date.now()};
   for(const ev of ['pointerdown','keydown','mousemove','scroll','touchstart'])window.addEventListener(ev,markActive,{passive:true});
   setInterval(async()=>{
@@ -569,6 +575,10 @@
     if(idle<60000&&Date.now()-lastPing>=300000){
       lastPing=Date.now();
       fetch('/api/admin/state').then(r=>{if(r.status===401){dirty=false;location.replace('/admin/#timeout=1')}}).catch(()=>{});
+    }
+    if(cfg?.integrations?.canSync&&cfg.integrations.autoSync!==false&&Date.now()-lastAutoSync>=120000){
+      lastAutoSync=Date.now();
+      api('erp',{action:'auto-tick'}).then(r=>{if(r?.state)cfg.integrations=r.state}).catch(()=>{});
     }
   },30000);
   api('state').then(async x=>{cfg=x;try{const sp=await api('studio-prefs');if(sp&&Object.keys(sp).length)applyStudioPrefs(sp)}catch{}const h=location.hash.slice(1);const firstTab=cfg.user.role==='owner'?(Object.hasOwn(titles,h)?h:'overview'):((cfg.user.permissions?.includes(h)||h==='security2fa')?h:(cfg.user.permissions?.[0]||'pages'));await open(firstTab)}).catch(e=>notice.textContent=e.message);

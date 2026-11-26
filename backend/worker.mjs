@@ -34,18 +34,19 @@ async function erpCipher(env){
 }
 async function erpCredentials(store,env){
   const saved=(await store.get('security/erp')).data||{};
-  if(saved.deleted&&!saved.apiUrl)return {apiUrl:'',apiKey:'',paused:false,source:'none',lastCheck:saved.lastCheck||null};
+  const extra={autoSync:saved.autoSync!==false,lastCheck:saved.lastCheck||null,lastSync:saved.lastSync||null};
+  if(saved.deleted&&!saved.apiUrl)return {apiUrl:'',apiKey:'',paused:false,source:'none',...extra};
   if(saved.apiUrl&&saved.secret&&saved.iv){
     try{
       const dec=await crypto.subtle.decrypt({name:'AES-GCM',iv:bytes(saved.iv)},await erpCipher(env),bytes(saved.secret));
-      return {apiUrl:saved.apiUrl,apiKey:new TextDecoder().decode(dec),paused:!!saved.paused,source:'studio',lastCheck:saved.lastCheck||null};
+      return {apiUrl:saved.apiUrl,apiKey:new TextDecoder().decode(dec),paused:!!saved.paused,source:'studio',...extra};
     }catch{}
   }
-  return {apiUrl:env.SERVICEHUB_API_URL||'',apiKey:env.SERVICEHUB_API_KEY||'',paused:!!saved.paused,source:env.SERVICEHUB_API_URL?'env':'none',lastCheck:saved.lastCheck||null};
+  return {apiUrl:env.SERVICEHUB_API_URL||'',apiKey:env.SERVICEHUB_API_KEY||'',paused:!!saved.paused,source:env.SERVICEHUB_API_URL?'env':'none',...extra};
 }
 async function erpState(store,env){
   const creds=await erpCredentials(store,env),base=parseErpUrl(creds.apiUrl,creds.apiKey);
-  return {...base,apiUrl:creds.apiUrl,source:creds.source,paused:creds.paused,canSync:!creds.paused&&!!base.canSync,lastCheck:creds.lastCheck};
+  return {...base,apiUrl:creds.apiUrl,source:creds.source,paused:creds.paused,canSync:!creds.paused&&!!base.canSync,autoSync:creds.autoSync,lastCheck:creds.lastCheck,lastSync:creds.lastSync};
 }
 async function basic(request,env,store,identity){
   const auth=request.headers.get('authorization')||'';
@@ -77,8 +78,98 @@ async function sync(env,store,key) {
   const erpId=Number(response?.id??response?.enquiry?.id??response?.service_request?.id??response?.lead?.id);
   if(!Number.isSafeInteger(erpId)||erpId<1)fail('ServiceHub returned an unrecognised receipt. Retry using the same request.',502);
   // Another administrator can change status while the external call is in progress.
-  for(let n=0;n<3;n++){const next=await store.get(key);if(next.data.erpId)return next;try{const upd={...next.data,erpId};delete upd.erpError;await store.save(key,upd,next.version,event('Quotes','Sent quote to ServiceHub',r.service||'Service quote'));return await store.get(key)}catch(e){if(e.status!==409)throw e}}
+  for(let n=0;n<3;n++){const next=await store.get(key);if(next.data.erpId)return next;try{const upd={...next.data,erpId,erpSyncedStatus:next.data.status||'New'};delete upd.erpError;await store.save(key,upd,next.version,event('Quotes','Sent quote to ServiceHub',r.service||'Service quote'));return await store.get(key)}catch(e){if(e.status!==409)throw e}}
   fail('Reload and retry delivery.',409);
+}
+async function pullErpPricing(env,store,client,{quiet=false}={}){
+  const list=await client.listServices();
+  if(list===null)return {unsupported:true,updatedCount:0,total:0};
+  const srow=await store.get('settings');
+  const curSet=srow.data||{draft:defaults,live:defaults};
+  const draft=structuredClone(curSet.draft||defaults),live=structuredClone(curSet.live||defaults);
+  draft.pricing=draft.pricing||structuredClone(defaults.pricing);
+  live.pricing=live.pricing||structuredClone(defaults.pricing);
+  let updatedCount=0;
+  for(const item of list){
+    if(!item||typeof item!=='object')continue;
+    const name=txt(item.name||item.title||item.service_name||'',80);
+    const rate=Number(item.rate??item.price??item.unit_price??item.amount??0);
+    if(!Number.isFinite(rate)||rate<=0)continue;
+    const slug=item.slug?String(item.slug):'';
+    const idKey=item.id?String(item.id):'';
+    let matchKey=slug&&draft.pricing[slug]?slug:(idKey&&draft.pricing[idKey]?idKey:'');
+    if(!matchKey&&name){
+      const norm=name.toLowerCase();
+      matchKey=Object.keys(draft.pricing).find(k=>(draft.pricing[k]?.name||'').trim().toLowerCase()===norm)||'';
+    }
+    if(matchKey){
+      const prevRate=Number(draft.pricing[matchKey]?.rate),prevName=draft.pricing[matchKey]?.name;
+      const nextName=name||prevName;
+      if(prevRate!==Math.round(rate*100)/100||prevName!==nextName||Number(live.pricing[matchKey]?.rate)!==Math.round(rate*100)/100){
+        draft.pricing[matchKey]={...draft.pricing[matchKey],rate,name:nextName};
+        live.pricing[matchKey]={...(live.pricing[matchKey]||draft.pricing[matchKey]),rate,name:nextName};
+        updatedCount++;
+      }
+    }else if(name){
+      const newKey='custom-'+crypto.randomUUID().replaceAll('-','');
+      const entry={kind:item.kind==='plan'?'plan':'service',name,rate,description:txt(item.description||'',300),unit:txt(item.unit||'Units',30),sectors:Array.isArray(item.sectors)&&item.sectors.length?item.sectors:['residential','commercial','industrial']};
+      draft.pricing[newKey]=entry;
+      live.pricing[newKey]=structuredClone(entry);
+      updatedCount++;
+    }
+  }
+  if(updatedCount>0){
+    const saved={draft:cleanSettings(draft),live:cleanSettings(live)};
+    await store.save('settings',saved,srow.version,quiet?undefined:event('Website','Pulled service prices from ERP',updatedCount+' updated'));
+  }
+  return {unsupported:false,updatedCount,total:list.length};
+}
+async function syncAll(env,store,{limit=100,quiet=false}={}){
+  const creds=await erpCredentials(store,env),base=parseErpUrl(creds.apiUrl,creds.apiKey);
+  if(creds.paused)fail('ServiceHub ERP sync is disconnected in Studio > Integrations.',503);
+  if(!base.canSync)fail('Add a ServiceHub API URL and API key first.',409);
+  const client=createServiceHubClient({baseUrl:creds.apiUrl,apiKey:creds.apiKey});
+  let cursor='request/~';const unsent=[],changed=[];
+  do{
+    const page=await store.inbox(cursor);
+    for(const r of page.items||[]){
+      if(!r.erpId&&unsent.length<limit)unsent.push(r);
+      else if(r.erpId&&r.status&&r.status!==r.erpSyncedStatus&&changed.length<limit)changed.push(r);
+      if(unsent.length>=limit&&changed.length>=limit)break;
+    }
+    cursor=page.next;
+  }while(cursor&&(unsent.length<limit||changed.length<limit));
+  let sent=0,failed=0,updated=0;const errors=[];
+  for(const r of unsent){
+    try{await sync(env,store,r.key);sent++}catch(err){
+      failed++;
+      if(errors.length<5)errors.push((r.external||r.key)+': '+(err?.message||'Sync failed'));
+      try{const curRow=await store.get(r.key);if(curRow.data&&!curRow.data.erpId)await store.save(r.key,{...curRow.data,erpError:txt(err?.message||'Sync failed',240)},curRow.version)}catch{}
+    }
+  }
+  for(const r of changed){
+    try{
+      const res=await client.updateStatus(r.erpId,{status:r.status});
+      if(!res?.unsupported){
+        const curRow=await store.get(r.key);
+        if(curRow.data)await store.save(r.key,{...curRow.data,erpSyncedStatus:r.status},curRow.version);
+        updated++;
+      }
+    }catch(err){if(errors.length<5)errors.push((r.external||r.key)+' status: '+(err?.message||'Update failed'))}
+  }
+  let pricesUpdated=0,pricingNote='';
+  try{
+    const pr=await pullErpPricing(env,store,client,{quiet:true});
+    pricesUpdated=pr.updatedCount;
+    if(pr.unsupported)pricingNote='No pricing endpoint on ERP';
+  }catch(err){pricingNote=err?.message||'Pricing pull skipped'}
+  const row=await store.get('security/erp'),cur=row.data||{};
+  const summary='Sent '+sent+', updated '+updated+', pulled '+pricesUpdated+' prices'+(failed?' ('+failed+' failed)':'');
+  const lastSync={at:new Date().toISOString(),sent,failed,updated,pricesUpdated};
+  try{
+    await store.save('security/erp',{...cur,lastSync},row.version,(!quiet||sent||updated||pricesUpdated)?event('Website','Synced data with ServiceHub ERP',summary):undefined);
+  }catch{}
+  return {total:unsent.length,sent,failed,updated,pricesUpdated,pricingNote,errors,lastSync,state:await erpState(store,env)};
 }
 function assetResponse(entry){const [type,zipped,source]=entry;const buffer=bytes(source);let stream=buffer;if(zipped)stream=new Blob([buffer]).stream().pipeThrough(new DecompressionStream('gzip'));return new Response(stream,{headers:{'Content-Type':type+(type.startsWith('text/')?'; charset=utf-8':''),'X-Content-Type-Options':'nosniff','Cache-Control':type==='text/html'?'private, no-store':'private, max-age=300'}})}
 export async function serve(request,env,store,platform){
@@ -211,67 +302,26 @@ export async function serve(request,env,store,platform){
           await store.save('security/erp',{...cur,lastCheck:{status,at:new Date().toISOString()}},row.version,event('Website','Tested ServiceHub ERP connection',status));
           return json(await erpState(store,env));
         }
-        if(input.action==='push-all'){
+        if(input.action==='auto-sync'){
+          await store.save('security/erp',{...cur,autoSync:!!input.enabled},row.version,event('Website',input.enabled?'Enabled ServiceHub auto-sync':'Paused ServiceHub auto-sync'));
+          return json(await erpState(store,env));
+        }
+        if(input.action==='sync-all'||input.action==='push-all'){
+          return json(await syncAll(env,store,{limit:100,quiet:false}));
+        }
+        if(input.action==='auto-tick'){
           const creds=await erpCredentials(store,env),base=parseErpUrl(creds.apiUrl,creds.apiKey);
-          if(creds.paused)fail('ServiceHub ERP sync is disconnected in Studio > Integrations.',503);
-          if(!base.canSync)fail('Add a ServiceHub API URL and API key first.',409);
-          let cursor='request/~',unsent=[];
-          do{
-            const page=await store.inbox(cursor);
-            for(const r of page.items||[]){if(!r.erpId)unsent.push(r);if(unsent.length>=100)break}
-            cursor=page.next;
-          }while(cursor&&unsent.length<100);
-          let sent=0,failed=0;const errors=[];
-          for(const r of unsent){
-            try{await sync(env,store,r.key);sent++}catch(err){
-              failed++;
-              if(errors.length<5)errors.push((r.external||r.key)+': '+(err?.message||'Sync failed'));
-              try{const curRow=await store.get(r.key);if(curRow.data&&!curRow.data.erpId)await store.save(r.key,{...curRow.data,erpError:txt(err?.message||'Sync failed',240)},curRow.version)}catch{}
-            }
-          }
-          return json({total:unsent.length,sent,failed,errors,state:await erpState(store,env)});
+          if(!creds.autoSync||creds.paused||!base.canSync)return json({skipped:true,state:await erpState(store,env)});
+          return json(await syncAll(env,store,{limit:25,quiet:true}));
         }
         if(input.action==='pull-pricing'){
           const creds=await erpCredentials(store,env),base=parseErpUrl(creds.apiUrl,creds.apiKey);
           if(creds.paused)fail('ServiceHub ERP sync is disconnected in Studio > Integrations.',503);
           if(!base.canSync)fail('Add a ServiceHub API URL and API key first.',409);
           const client=createServiceHubClient({baseUrl:creds.apiUrl,apiKey:creds.apiKey});
-          const list=await client.listServices();
-          if(list===null)fail('No /services, /pricing, or /catalog endpoint found on ServiceHub ERP.',404);
-          const srow=await store.get('settings');
-          const curSet=srow.data||{draft:defaults,live:defaults};
-          const draft=structuredClone(curSet.draft||defaults),live=structuredClone(curSet.live||defaults);
-          draft.pricing=draft.pricing||structuredClone(defaults.pricing);
-          live.pricing=live.pricing||structuredClone(defaults.pricing);
-          let updatedCount=0;
-          for(const item of list){
-            if(!item||typeof item!=='object')continue;
-            const name=txt(item.name||item.title||item.service_name||'',80);
-            const rate=Number(item.rate??item.price??item.unit_price??item.amount??0);
-            if(!Number.isFinite(rate)||rate<=0)continue;
-            const slug=item.slug?String(item.slug):'';
-            const idKey=item.id?String(item.id):'';
-            let matchKey=slug&&draft.pricing[slug]?slug:(idKey&&draft.pricing[idKey]?idKey:'');
-            if(!matchKey&&name){
-              const norm=name.toLowerCase();
-              matchKey=Object.keys(draft.pricing).find(k=>(draft.pricing[k]?.name||'').trim().toLowerCase()===norm)||'';
-            }
-            if(matchKey){
-              draft.pricing[matchKey]={...draft.pricing[matchKey],rate,name:name||draft.pricing[matchKey].name};
-              if(live.pricing[matchKey])live.pricing[matchKey]={...live.pricing[matchKey],rate,name:name||live.pricing[matchKey].name};
-              else live.pricing[matchKey]=structuredClone(draft.pricing[matchKey]);
-              updatedCount++;
-            }else if(name){
-              const newKey='custom-'+crypto.randomUUID().replaceAll('-','');
-              const entry={kind:item.kind==='plan'?'plan':'service',name,rate,description:txt(item.description||'',300),unit:txt(item.unit||'Units',30),sectors:Array.isArray(item.sectors)&&item.sectors.length?item.sectors:['residential','commercial','industrial']};
-              draft.pricing[newKey]=entry;
-              live.pricing[newKey]=structuredClone(entry);
-              updatedCount++;
-            }
-          }
-          const saved={draft:cleanSettings(draft),live:cleanSettings(live)};
-          await store.save('settings',saved,srow.version,event('Website','Pulled service prices from ERP',updatedCount+' updated'));
-          return json({updatedCount,total:list.length,message:updatedCount?('Updated '+updatedCount+' service prices from ServiceHub ERP.'):'No service prices with valid rates (> 0) found in ERP.'});
+          const res=await pullErpPricing(env,store,client,{quiet:false});
+          if(res.unsupported)fail('No /services, /pricing, or /catalog endpoint found on ServiceHub ERP.',404);
+          return json({updatedCount:res.updatedCount,total:res.total,message:res.updatedCount?('Updated '+res.updatedCount+' service prices from ServiceHub ERP.'):'No service prices with valid rates (> 0) found in ERP.'});
         }
         fail('Unknown ERP action.');
       }
@@ -398,6 +448,15 @@ export async function serve(request,env,store,platform){
               idempotencyKey:'sb-status-'+row.data.external+'-'+x.status+'-'+row.version
             });
           }catch{statusMail='Unconfirmed'}
+        }
+        if(row.data.erpId){
+          try{
+            const creds=await erpCredentials(store,env),base=parseErpUrl(creds.apiUrl,creds.apiKey);
+            if(creds.autoSync&&!creds.paused&&base.canSync){
+              const res=await createServiceHubClient({baseUrl:creds.apiUrl,apiKey:creds.apiKey}).updateStatus(row.data.erpId,{status:x.status});
+              if(!res?.unsupported){const latest=await store.get(x.key);if(latest.data)await store.save(x.key,{...latest.data,erpSyncedStatus:x.status},latest.version)}
+            }
+          }catch{}
         }
       }
       return json({ok:true,emailStatus:statusMail});
