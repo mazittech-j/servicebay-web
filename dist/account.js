@@ -101,7 +101,7 @@
     try {
       const action = challenge ? 'verify-2fa' : form.dataset.action;
       const payload = challenge
-        ? { challenge, code: data.code, website: data.website }
+        ? { challenge, code: data.code, _sb_hp: data._sb_hp }
         : { ...data, invite: inviteToken, token: resetToken };
       const res = await fetch('/api/studio-auth/' + action, {
         method: 'POST',

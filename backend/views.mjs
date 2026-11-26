@@ -5,7 +5,7 @@ function frame(title,body,script){return '<!doctype html><html lang="en"><head><
 const eyeBtn='<button type="button" class="pw-toggle" aria-label="Show password" aria-pressed="false">Show</button>';
 const password=(label='Password',fresh=false)=>'<label>'+label+'<span class="pw-wrap"><input name="password" type="password" autocomplete="'+(fresh?'new-password':'current-password')+'" '+(fresh?'minlength="15" ':'')+'maxlength="128" required>'+eyeBtn+'</span></label>';
 const confirmPass='<label>Confirm password<span class="pw-wrap"><input name="confirm" type="password" autocomplete="new-password" minlength="15" maxlength="128" required>'+eyeBtn+'</span></label>';
-const honeypot='<div class="hp-field" aria-hidden="true"><label>Website<input name="website" tabindex="-1" autocomplete="off"></label></div>';
+const honeypot='<div class="hp-field" aria-hidden="true"><label>Leave blank<input name="_sb_hp" tabindex="-1" autocomplete="nope" data-lpignore="true"></label></div>';
 const outcome='<p class="result" role="status" aria-live="polite"></p>';
 export function studioLogin({setup,identity}){
   const forgotSection=setup?'':'<div class="auth-links"><button type="button" class="link-btn" id="forgot-toggle">Team member forgot password?</button></div><form id="forgot-form" hidden><label>Email or username<input name="email" autocomplete="username" required></label><label>Message to owner (optional)<input name="note" maxlength="300" placeholder="Need a password reset link"></label>'+honeypot+'<button class="btn primary">Send reset request</button><button type="button" class="btn secondary" id="forgot-cancel">Back to sign in</button>'+outcome+'</form>';

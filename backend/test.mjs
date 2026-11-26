@@ -280,7 +280,7 @@ test('Owner login, requestOrigin CSRF, Google Authenticator 2FA, team password r
 
     // Security shield: honeypot & brute-force lockout email owner
     const botCtx={nodeStore:store,ip:'203.0.113.55',requestOrigin:altOrigin};
-    const bot=await call('/api/studio-auth/login',{config:nodeCfg,ctx:botCtx,headers:{origin:altOrigin},post:{email:'owner',password:'1234',website:'http://spam.bot'}});
+    const bot=await call('/api/studio-auth/login',{config:nodeCfg,ctx:botCtx,headers:{origin:altOrigin},post:{email:'owner',password:'1234',_sb_hp:'http://spam.bot'}});
     assert.equal(bot.status,403);
     assert.ok(alerts.some(m=>m.subject.includes('Bot attack blocked')));
     const blocked=await call('/api/studio-auth/login',{config:nodeCfg,ctx:botCtx,headers:{origin:altOrigin},post:{email:'owner',password:nodeCfg.ADMIN_PASSWORD}});

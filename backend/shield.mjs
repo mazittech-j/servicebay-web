@@ -20,7 +20,7 @@ export function detectProbe(path,search='',rawBody=''){
 
 export function detectHoneypot(input){
   if(!input||typeof input!=='object')return false;
-  return Boolean(String(input.website||'').trim()||String(input.company_url||'').trim());
+  return Boolean(String(input._sb_hp||'').trim());
 }
 
 export async function resolveOwnerEmail(db,env){

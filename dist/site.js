@@ -380,7 +380,7 @@ for (const form of enquiryForms) {
       const group=form.querySelector('fieldset'),submit=form.querySelector('.form-submit');group.disabled=true;output.textContent='Sending your request…';
       try{
         if(!receipt)receipt='SB-'+Date.now().toString(36).toUpperCase()+'-'+crypto.randomUUID().replaceAll('-','').toUpperCase();
-        const res=await fetch('/api/portal/requests',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:receipt,name:value('name'),email:value('email'),phone:value('mobile'),service,serviceId:value('service'),planId:value('plan'),plan:value('plan')?plan.selectedOptions[0].textContent:'',area:value('area'),property:value('property'),country:siteRegions[country.value].name,details:value('details'),...siteAttribution,password:values.get('portalPassword')||'',website:value('website'),message})});
+        const res=await fetch('/api/portal/requests',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:receipt,name:value('name'),email:value('email'),phone:value('mobile'),service,serviceId:value('service'),planId:value('plan'),plan:value('plan')?plan.selectedOptions[0].textContent:'',area:value('area'),property:value('property'),country:siteRegions[country.value].name,details:value('details'),...siteAttribution,password:values.get('portalPassword')||'',_sb_hp:value('_sb_hp'),message})});
         let r={};try{r=await res.json()}catch{}
         if(!res.ok)throw Error(r.error||'Could not submit the request ('+res.status+'). Please try again.');
         sent=true;submit.disabled=true;review.hidden=true;try{sessionStorage.setItem('servicebay-receipt',r.code)}catch{}
