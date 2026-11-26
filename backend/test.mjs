@@ -353,5 +353,28 @@ test('Passwordless quote request sends receipt, status updates email customer, a
   }finally{globalThis.fetch=original}
 });
 
+test('Traffic source & device attribution tracks visits, compares platforms in admin, and syncs to ERP',async()=>{
+  const erpCfg={...env,SERVICEHUB_API_URL:'https://servicehub.test/api/v1/prime-fix',SERVICEHUB_API_KEY:'shw_'+'b'.repeat(43)};
+  const original=globalThis.fetch,erpSent=[];
+  try{
+    globalThis.fetch=async(url,req)=>{erpSent.push(JSON.parse(req.body));return Response.json({success:true,data:{id:777}})};
+    assert.equal((await call('/api/analytics/visit',{post:{source:'Google',medium:'cpc',device:'Mobile',page:'/'}})).status,200);
+    assert.equal((await call('/api/analytics/visit',{post:{source:'Facebook',medium:'social',device:'Desktop',page:'/amc/'}})).status,200);
+    const code='SB-'+Date.now().toString(36).toUpperCase()+'-'+crypto.randomUUID().replaceAll('-','').toUpperCase();
+    const q=await call('/api/portal/requests',{config:erpCfg,headers:{'CF-Connecting-IP':'attr-ip-1'},post:{code,name:'Attr Lead',email:'attr@example.test',phone:'0509998888',message:'Need AC service',service:'AC & HVAC',area:'Downtown',source:'Google',medium:'cpc',campaign:'dubai-ac',device:'Mobile'}});
+    assert.equal(q.status,201);
+    assert.equal(erpSent.length,1);
+    assert.equal(erpSent[0].source,'Google');
+    assert.equal(erpSent[0].device,'Mobile');
+    assert.match(erpSent[0].message,/Source: Google/);
+
+    const ov=await (await call('/api/admin/overview',{admin:true,config:erpCfg})).json();
+    const google=ov.sources.platforms.find(p=>p.source==='Google');
+    assert.ok(google&&google.visits>=1&&google.leads>=1);
+    assert.ok(ov.sources.devices.some(d=>d.device==='Mobile'));
+  }finally{globalThis.fetch=original}
+});
+
+
 
 

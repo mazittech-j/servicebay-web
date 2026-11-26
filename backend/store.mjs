@@ -44,6 +44,19 @@ export function records(query, dialect="sqlite", batch, actor="ServiceBay") {
       const created=scalar('created'),day=dialect==='postgres'?"to_char(("+created+")::timestamptz AT TIME ZONE 'Asia/Dubai','YYYY-MM-DD')":"date("+created+",'+4 hours')";
       return query("SELECT "+day+" AS day,count(*) AS total FROM servicebay_records WHERE key LIKE 'request/%' AND "+created+">=? GROUP BY 1 ORDER BY 1",[since]);
     },
+    async sourceReport(since=''){
+      const src="COALESCE(NULLIF("+scalar('source')+",''),'Direct')";
+      const dev="COALESCE(NULLIF("+scalar('device')+",''),'Unknown')";
+      const created=scalar('created');
+      const cond=since?" AND "+created+">=?":"";
+      const args=since?[since]:[];
+      const [visits,leads,devices]=await Promise.all([
+        query("SELECT "+src+" AS source,count(*) AS total FROM servicebay_records WHERE key LIKE 'visit/%'"+cond+" GROUP BY 1 ORDER BY 2 DESC",args),
+        query("SELECT "+src+" AS source,count(*) AS total FROM servicebay_records WHERE key LIKE 'request/%'"+cond+" GROUP BY 1 ORDER BY 2 DESC",args),
+        query("SELECT "+dev+" AS device,count(*) AS total FROM servicebay_records WHERE (key LIKE 'visit/%' OR key LIKE 'request/%')"+cond+" GROUP BY 1 ORDER BY 2 DESC",args)
+      ]);
+      return {visits,leads,devices};
+    },
     async remove(key){await query('DELETE FROM servicebay_records WHERE key=? RETURNING key',[key])},
     async pruneSessions(){await query("DELETE FROM servicebay_records WHERE key LIKE 'session/%' AND updated < ? RETURNING key",[new Date(Date.now()-86400000).toISOString()])},
     async requestCounts(customerId){

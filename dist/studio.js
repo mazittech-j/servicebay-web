@@ -150,8 +150,55 @@
         const table=el('table',undefined,'report-table');table.append(el('caption',title));const header=el('thead'),tr=el('tr');for(const h of [kind==='plan'?'Plan':'Service','Enquiries','Pending','Scheduled','Completed','Other']){const th=el('th',h);th.scope='col';tr.append(th)}header.append(tr);table.append(header);
         const tbody=el('tbody');for(const v of rows){const line=el('tr'),name=el('th',v.label);name.scope='row';line.append(name);for(const [,key] of countsList)line.append(el('td',String(v[key])));tbody.append(line)}table.append(tbody);region.append(table);body.append(region);
       }
+      renderSourcesSection(body,r.sources);
     }
     range.onchange=()=>load().catch(e=>notice.textContent=e.message);await load();
+  }
+  function renderSourcesSection(parent,sources){
+    if(!sources)return;
+    const platforms=sources.platforms||[],devices=sources.devices||[];
+    const wrap=el('div',undefined,'insight-grid');parent.append(wrap);
+    const pCard=card(wrap,'Traffic & lead sources (Platform comparison)');
+    if(!platforms.length){pCard.append(el('p','Visitor & quote source data (Google, Facebook, Instagram, WhatsApp, Direct) will appear here as visitors browse and submit quotes.','empty-state'))}
+    else{
+      const leg=el('div',undefined,'src-legend');
+      leg.innerHTML='<span><i class="src-dot" style="background:#4d828d"></i>Visits ('+sources.totalVisits+')</span><span><i class="src-dot" style="background:#b54524"></i>Quote requests ('+sources.totalLeads+')</span>';
+      pCard.append(leg);
+      const maxVal=Math.max(1,...platforms.map(p=>Math.max(p.visits,p.leads)));
+      const bars=el('div',undefined,'src-bars');
+      for(const p of platforms){
+        const row=el('div',undefined,'src-bar-row'),hd=el('div',undefined,'case-line');
+        const conv=p.visits?Math.round(p.leads/p.visits*100)+'%':'—';
+        hd.append(el('strong',p.source),el('small',p.visits+' visits · '+p.leads+' quotes · conv '+conv));
+        const t1=el('div',undefined,'src-track'),f1=el('i',undefined,'src-fill-visit');f1.style.width=(p.visits/maxVal*100)+'%';t1.append(f1);
+        const t2=el('div',undefined,'src-track'),f2=el('i',undefined,'src-fill-lead');f2.style.width=(p.leads/maxVal*100)+'%';t2.append(f2);
+        row.append(hd,t1,t2);bars.append(row);
+      }
+      pCard.append(bars);
+      const region=el('div',undefined,'report-scroll');
+      const table=el('table',undefined,'report-table'),head=el('thead'),hr=el('tr');
+      for(const h of ['Platform','Visits','Quotes','Conversion','Lead share']){const th=el('th',h);th.scope='col';hr.append(th)}
+      head.append(hr);table.append(head);
+      const tbody=el('tbody');
+      for(const p of platforms){
+        const tr=el('tr'),th=el('th',p.source);th.scope='row';tr.append(th);
+        const conv=p.visits?((p.leads/p.visits)*100).toFixed(1)+'%':'—';
+        const share=sources.totalLeads?Math.round(p.leads/sources.totalLeads*100)+'%':'0%';
+        tr.append(el('td',String(p.visits)),el('td',String(p.leads)),el('td',conv),el('td',share));
+        tbody.append(tr);
+      }
+      table.append(tbody);region.append(table);pCard.append(region);
+    }
+    const dCard=card(wrap,'Visitor & lead devices');
+    if(!devices.length){dCard.append(el('p','Device breakdown (Mobile, Desktop, Tablet) will appear here.','empty-state'))}
+    else{
+      const devTotal=devices.reduce((s,d)=>s+d.total,0)||1;
+      for(const d of devices){
+        const line=el('div',undefined,'demand-item'),hd=el('div',undefined,'case-line'),tr=el('div',undefined,'demand-track'),fl=el('i');
+        hd.append(el('span',d.device),el('strong',d.total+' ('+Math.round(d.total/devTotal*100)+'%)'));
+        fl.style.width=(d.total/devices[0].total*100)+'%';tr.append(fl);line.append(hd,tr);dCard.append(line);
+      }
+    }
   }
   async function overview(ticket){
     const x=await api('overview');if(ticket!==epoch)return;
@@ -164,8 +211,9 @@
     if(!x.top.length)demand.append(el('p','Service demand appears after the first enquiry.','empty-state'));
     for(const v of x.top){const line=el('div',undefined,'demand-item'),head=el('div',undefined,'case-line'),track=el('div',undefined,'demand-track'),fill=el('i');head.append(el('span',v.label),el('strong',String(v.total)));fill.style.width=v.total/x.top[0].total*100+'%';track.append(fill);line.append(head,track);demand.append(line)}
     const recent=card(grid);sectionBar(recent,'Recent quotes','Open inbox',()=>open('requests'));if(!x.recent.length)recent.append(el('p','No quote requests yet.','empty-state'));
-    for(const r of x.recent){const row=el('div',undefined,'request-row');row.append(el('strong',r.name),stageBadge(r.status),el('small',r.service+' · '+stamp(r.created)));recent.append(row)}
+    for(const r of x.recent){const row=el('div',undefined,'request-row');row.append(el('strong',r.name),stageBadge(r.status),el('small',[r.service,r.source||'Direct',stamp(r.created)].join(' · ')));recent.append(row)}
     const log=card(grid);sectionBar(log,'Recent activity','View log',()=>open('activity'));activityRows(log,x.activity);
+    renderSourcesSection(panel,x.sources);
     const shortcuts=card(panel);sectionBar(shortcuts,'Website management');buttons(shortcuts,button('Page editor · '+x.pages,()=>open('pages')),button('Catalog pricing · '+x.pricing,()=>open('rates')),button('Website appearance',()=>open('company')));
   }
   function typeControls(parent,data,base){
@@ -431,8 +479,8 @@
     let query='',stage='',cursor=null,selected='',items=[],revision=0;
     const csvBtn=button('Export CSV',()=>{
       const escCsv=v=>'"'+String(v??'').replace(/"/g,'""')+'"';
-      const head=['Created','Name','Email','Phone','Service','Area','Property','Status','Receipt'];
-      const lines=[head.join(','),...items.map(r=>[r.created,r.name,r.email,r.phone,r.service||'Service quote',r.area,r.property,r.status,r.receipt].map(escCsv).join(','))];
+      const head=['Created','Name','Email','Phone','Service','Area','Property','Status','Source','Device','Receipt'];
+      const lines=[head.join(','),...items.map(r=>[r.created,r.name,r.email,r.phone,r.service||'Service quote',r.area,r.property,r.status,r.source||'Direct',r.device||'',r.receipt].map(escCsv).join(','))];
       const blob=new Blob([lines.join('\n')],{type:'text/csv;charset=utf-8'}),url=URL.createObjectURL(blob),a=el('a');
       a.href=url;a.download='servicebay-requests.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),10000);
     },'secondary');
@@ -450,17 +498,19 @@
     function render(){
       list.replaceChildren();
       if(!items.length)list.append(el('p','No matching requests.','empty-state'));
-      for(const row of items){const b=el('button',undefined,'case-choice'),top=el('span',undefined,'case-line'),bottom=el('span',undefined,'case-line');b.type='button';b.setAttribute('aria-pressed',String(row.key===selected));top.append(el('strong',row.name),stageBadge(row.status));bottom.append(el('span',row.service||'Service quote'),el('small',new Date(row.created).toLocaleDateString()));b.append(top,bottom);b.onclick=()=>{selected=row.key;render();if(matchMedia('(max-width:780px)').matches)detail.scrollIntoView({block:'start'})};list.append(b)}
+      for(const row of items){const b=el('button',undefined,'case-choice'),top=el('span',undefined,'case-line'),bottom=el('span',undefined,'case-line');b.type='button';b.setAttribute('aria-pressed',String(row.key===selected));top.append(el('strong',row.name),stageBadge(row.status));bottom.append(el('span',(row.service||'Service quote')+' · '+(row.source||'Direct')),el('small',new Date(row.created).toLocaleDateString()));b.append(top,bottom);b.onclick=()=>{selected=row.key;render();if(matchMedia('(max-width:780px)').matches)detail.scrollIntoView({block:'start'})};list.append(b)}
       if(cursor)list.append(button('Load more requests',()=>refresh(true)));
       detail.replaceChildren();
       const row=items.find(v=>v.key===selected);if(!row){detail.append(el('h2','Request details'),el('p','Select a request to view its details.'));return}
       const head=el('div',undefined,'section-head');head.append(el('h2',row.service||'Service quote'),stageBadge(row.status));detail.append(head,el('p',row.name,'case-client'));
-      facts(detail,[['Email',row.email],['Phone',row.phone],['Area',row.area],['Property',row.property],['Country',row.country],['Received',new Date(row.created).toLocaleString()],['Receipt email',row.emailState],['ServiceHub',row.erpId?'Delivered':'Stored on website']]);
+      const erpText=row.erpId?('Delivered (#'+row.erpId+')'):(row.erpError?('Sync failed: '+row.erpError):'Stored on website');
+      const srcText=[row.source||'Direct',row.medium,row.campaign,row.device].filter(Boolean).join(' · ');
+      facts(detail,[['Email',row.email],['Phone',row.phone],['Source',srcText],['Area',row.area],['Property',row.property],['Country',row.country],['Received',new Date(row.created).toLocaleString()],['Receipt email',row.emailState],['ServiceHub',erpText]]);
       if(row.details||row.message){const text=el('details'),s=el('summary','Request description');text.append(s,el('p',row.details||row.message,'preserve-lines'));text.open=true;detail.append(text)}
       const state=field(detail,'Request status',row.status,'text',stages);state.oninput=e=>e.stopPropagation();
-      const actions=[button('Update status',async()=>{await api('request',{key:row.key,previous:row.status,status:state.value});await refresh();notice.textContent='Request status updated.'},'primary')];
+      const actions=[button('Update status',async()=>{const res=await api('request',{key:row.key,previous:row.status,status:state.value});await refresh();notice.textContent='Request status updated.'+(res.emailStatus?' (Email: '+res.emailStatus+')':'')},'primary')];
       if(row.email&&!['Accepted','Needs delivery check'].includes(row.emailState))actions.push(button('Send receipt email',async()=>{const v=await api('request',{key:row.key,action:'email'});await refresh();notice.textContent='Receipt email: '+v.status+'.'}));
-      if(cfg.integrations.canSync&&!row.erpId)actions.push(button('Send to ServiceHub',async()=>{await api('request',{key:row.key,action:'sync'});await refresh()}));buttons(detail,...actions);
+      if(cfg.integrations.canSync&&!row.erpId)actions.push(button('Send to ServiceHub',async()=>{await api('request',{key:row.key,action:'sync'});await refresh();notice.textContent='Sent to ServiceHub ERP.'}));buttons(detail,...actions);
       const hist=row.history||[{status:'Received',at:row.created}];const activity=el('div',undefined,'case-activity');activity.append(el('h3','Request activity'));
       for(const event of [...hist].reverse()){const line=el('p');line.append(el('strong',event.status),el('small',new Date(event.at).toLocaleString()));activity.append(line)}detail.append(activity);
     }

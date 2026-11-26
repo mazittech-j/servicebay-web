@@ -212,6 +212,39 @@ function applyOption(select, value) {
   }
 }
 
+const siteAttribution=(()=>{
+  let saved=null;try{saved=JSON.parse(sessionStorage.getItem('servicebay-source')||'null')}catch{}
+  const q=new URLSearchParams(location.search);
+  const utm=q.get('utm_source')||q.get('fbclid')&&'Facebook'||q.get('gclid')&&'Google'||q.get('ttclid')&&'TikTok'||'';
+  const mapSource=raw=>{
+    const s=String(raw||'').trim().toLowerCase();
+    if(!s)return '';
+    if(s.includes('google'))return 'Google';
+    if(s.includes('facebook')||s==='fb'||s.includes('fb.'))return 'Facebook';
+    if(s.includes('instagram')||s==='ig')return 'Instagram';
+    if(s.includes('whatsapp')||s.includes('wa.me'))return 'WhatsApp';
+    if(s.includes('linkedin'))return 'LinkedIn';
+    if(s.includes('tiktok'))return 'TikTok';
+    if(s.includes('youtube')||s.includes('youtu.be'))return 'YouTube';
+    if(s.includes('twitter')||s==='x'||s==='t.co')return 'X / Twitter';
+    if(s.includes('bing'))return 'Bing';
+    return s.charAt(0).toUpperCase()+s.slice(1,32);
+  };
+  let refHost='';try{if(document.referrer){const u=new URL(document.referrer);if(u.origin!==location.origin)refHost=u.hostname.replace(/^www\./,'')}}catch{}
+  const ua=navigator.userAgent||'';
+  const device=/ipad|tablet/i.test(ua)?'Tablet':/mobi|android|iphone/i.test(ua)?'Mobile':'Desktop';
+  const detected=mapSource(utm)||mapSource(refHost)||(refHost?'Referral ('+refHost.slice(0,26)+')':'Direct');
+  const attr=saved&&(!utm&&saved.source!=='Direct')?saved:{source:utm?mapSource(utm):detected,medium:q.get('utm_medium')||(refHost?'referral':'direct'),campaign:q.get('utm_campaign')||'',device,landingPage:saved?.landingPage||location.pathname};
+  try{
+    sessionStorage.setItem('servicebay-source',JSON.stringify(attr));
+    if(!sessionStorage.getItem('servicebay-visit-logged')&&!q.has('studio')){
+      sessionStorage.setItem('servicebay-visit-logged','1');
+      fetch('/api/analytics/visit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...attr,page:location.pathname}),keepalive:true}).catch(()=>{});
+    }
+  }catch{}
+  return attr;
+})();
+
 const enquiryForms=document.querySelectorAll('.enquiry-form');
 const quoteAccount=enquiryForms.length?fetch('/api/customer/me').then(r=>r.ok?r.json():null).catch(()=>null):null;
 for (const form of enquiryForms) {
@@ -347,7 +380,7 @@ for (const form of enquiryForms) {
       const group=form.querySelector('fieldset'),submit=form.querySelector('.form-submit');group.disabled=true;output.textContent='Sending your request…';
       try{
         if(!receipt)receipt='SB-'+Date.now().toString(36).toUpperCase()+'-'+crypto.randomUUID().replaceAll('-','').toUpperCase();
-        const res=await fetch('/api/portal/requests',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:receipt,name:value('name'),email:value('email'),phone:value('mobile'),service,serviceId:value('service'),planId:value('plan'),plan:value('plan')?plan.selectedOptions[0].textContent:'',area:value('area'),property:value('property'),country:siteRegions[country.value].name,details:value('details'),password:values.get('portalPassword')||'',website:value('website'),message})});
+        const res=await fetch('/api/portal/requests',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:receipt,name:value('name'),email:value('email'),phone:value('mobile'),service,serviceId:value('service'),planId:value('plan'),plan:value('plan')?plan.selectedOptions[0].textContent:'',area:value('area'),property:value('property'),country:siteRegions[country.value].name,details:value('details'),...siteAttribution,password:values.get('portalPassword')||'',website:value('website'),message})});
         const r=await res.json();if(!res.ok)throw Error(r.error||'Please try again.');
         sent=true;submit.disabled=true;review.hidden=true;try{sessionStorage.setItem('servicebay-receipt',r.code)}catch{}
         const a=document.createElement('a');a.href='/portal/';a.textContent='Track in customer portal';

@@ -41,11 +41,13 @@ async function sync(env,store,key) {
   if(entry.data.erpId)return entry;
   if(!integration(env).canSync)fail('Add the ServiceHub API URL and integration key to enable delivery.',503);
   const r=entry.data,c=createServiceHubClient({baseUrl:env.SERVICEHUB_API_URL,apiKey:env.SERVICEHUB_API_KEY});
+  const attr=[r.source?'Source: '+r.source:'',r.medium?'Medium: '+r.medium:'',r.campaign?'Campaign: '+r.campaign:'',r.device?'Device: '+r.device:''].filter(Boolean).join(' | ');
+  const fullMsg=attr?(r.message+'\n\n['+attr+']'):r.message;
   let response;
-  try{response=await c.submit('enquiries',r.external,{external_id:r.external,name:r.name,email:r.email,phone:r.phone,message:r.message})}catch{fail('ServiceHub did not confirm delivery. The request is saved and can be retried.',502)}
+  try{response=await c.submit('enquiries',r.external,{external_id:r.external,name:r.name,email:r.email,phone:r.phone,message:fullMsg,source:r.source||'Direct',medium:r.medium||'',campaign:r.campaign||'',device:r.device||'',service:r.service||'',area:r.area||'',property:r.property||'',country:r.country||''})}catch(err){fail(err?.message||'ServiceHub did not confirm delivery. The request is saved and can be retried.',502)}
   if(!Number.isSafeInteger(Number(response?.id))||Number(response.id)<1)fail('ServiceHub returned an unrecognised receipt. Retry using the same request.',502);
   // Another administrator can change status while the external call is in progress.
-  for(let n=0;n<3;n++){const next=await store.get(key);if(next.data.erpId)return next;try{await store.save(key,{...next.data,erpId:Number(response.id)},next.version,event('Quotes','Sent quote to ServiceHub',r.service||'Service quote'));return await store.get(key)}catch(e){if(e.status!==409)throw e}}
+  for(let n=0;n<3;n++){const next=await store.get(key);if(next.data.erpId)return next;try{const upd={...next.data,erpId:Number(response.id)};delete upd.erpError;await store.save(key,upd,next.version,event('Quotes','Sent quote to ServiceHub',r.service||'Service quote'));return await store.get(key)}catch(e){if(e.status!==409)throw e}}
   fail('Reload and retry delivery.',409);
 }
 function assetResponse(entry){const [type,zipped,source]=entry;const buffer=bytes(source);let stream=buffer;if(zipped)stream=new Blob([buffer]).stream().pipeThrough(new DecompressionStream('gzip'));return new Response(stream,{headers:{'Content-Type':type+(type.startsWith('text/')?'; charset=utf-8':''),'X-Content-Type-Options':'nosniff','Cache-Control':type==='text/html'?'private, no-store':'private, max-age=300'}})}
@@ -91,6 +93,15 @@ export async function serve(request,env,store,platform){
         }
         throw err;
       }
+    }
+    if(path==='/api/analytics/visit'&&method==='POST'){
+      await store.limit('rate/visit/'+await digest(platform.ip||'shared'),40,10);
+      const x=await body(request,1024);
+      const source=txt(x.source||'Direct',40)||'Direct';
+      const medium=txt(x.medium||'',40),campaign=txt(x.campaign||'',60),device=txt(x.device||'Desktop',20)||'Desktop',page=txt(x.page||'/',120)||'/';
+      const now=new Date().toISOString();
+      await store.save('visit/'+now+'/'+crypto.randomUUID(),{source,medium,campaign,device,page,created:now},0);
+      return json({ok:true});
     }
     if(adminRoute&&!studioUser){
       if(studioPage&&method==='GET'){
@@ -169,12 +180,18 @@ export async function serve(request,env,store,platform){
     if((path==='/api/admin/overview'||path==='/api/admin/service-report')&&method==='GET'){
       const days=Number(u.searchParams.get('days')||0);if(![0,7,30,90].includes(days))fail('Choose a report period.');
       const period=reportingPeriod(days);
-      const [groups,settings]=await Promise.all([store.serviceGroups(period.since),store.get('settings')]);
+      const [groups,settings,srcRaw]=await Promise.all([store.serviceGroups(period.since),store.get('settings'),store.sourceReport(period.since)]);
       const live=settings.data?.live?.pricing||defaults.pricing,report=serviceReport(groups,live,defaults.pricing);
-      if(path.endsWith('service-report'))return json(report);
+      const map=new Map();
+      for(const v of srcRaw.visits){const s=v.source||'Direct';map.set(s,{source:s,visits:Number(v.total),leads:0})}
+      for(const l of srcRaw.leads){const s=l.source||'Direct',cur=map.get(s)||{source:s,visits:0,leads:0};cur.leads+=Number(l.total);map.set(s,cur)}
+      const platforms=[...map.values()].sort((a,b)=>(b.leads-a.leads)||(b.visits-a.visits));
+      const devices=srcRaw.devices.map(d=>({device:d.device||'Unknown',total:Number(d.total)}));
+      const sources={platforms,devices,totalVisits:platforms.reduce((s,p)=>s+p.visits,0),totalLeads:platforms.reduce((s,p)=>s+p.leads,0)};
+      if(path.endsWith('service-report'))return json({...report,sources});
       const [inbox,activity,daily]=await Promise.all([store.inbox(),store.activity(undefined,'',5),store.dailyRequests(period.weekStart)]);
       const byDay=new Map(daily.map(r=>[r.day,Number(r.total)]));
-      return json({pages:routes.length,pricing:Object.keys(live).length,totals:report.totals,top:report.rows.filter(r=>r.total).slice(0,5),week:period.days.map(day=>({day,total:byDay.get(day)||0})),activity:activity.items,recent:inbox.items.slice(0,5).map(r=>({name:r.name,service:r.service||'Service quote',status:r.status,created:r.created}))});
+      return json({pages:routes.length,pricing:Object.keys(live).length,totals:report.totals,top:report.rows.filter(r=>r.total).slice(0,5),week:period.days.map(day=>({day,total:byDay.get(day)||0})),activity:activity.items,recent:inbox.items.slice(0,5).map(r=>({name:r.name,service:r.service||'Service quote',status:r.status,created:r.created,source:r.source||'Direct'})),sources});
     }
     if(path==='/portal/'||path==='/portal')return html(portal(integration(env).portal,await session(request,store,'customer',platform,env)));
     if(path==='/api/customer/me'&&method==='GET')return json({user:await session(request,store,'customer',platform,env)});
@@ -271,13 +288,13 @@ export async function serve(request,env,store,platform){
         const service=txt(x.service||'Service quote',90),area=txt(x.area||'',80),created=new Date().toISOString();
         let inserted=false;
         if(!old.data){
-          const record={name,email:user.email,phone,message,service,area,property:txt(x.property||'',80),country:txt(x.country||'',80),details:txt(x.details||'',650),customerId:user.id,receipt:code,created,status:'Received',history:[{status:'Received',at:created}],serviceId:txt(x.serviceId||'',100),planId:txt(x.planId||'',100),plan:txt(x.plan||'',90),external:'sb-'+key.slice(-40),erpId:null};
-          try{await store.save(key,record,0,event('Quotes','Received quote',service,'Customer portal'));inserted=true}catch(e){if(e.status!==409)throw e;old=await store.get(key)}
+          const record={name,email:user.email,phone,message,service,area,property:txt(x.property||'',80),country:txt(x.country||'',80),details:txt(x.details||'',650),source:txt(x.source||'Direct',40)||'Direct',medium:txt(x.medium||'',40),campaign:txt(x.campaign||'',60),device:txt(x.device||'',20),landingPage:txt(x.landingPage||'',120),customerId:user.id,receipt:code,created,status:'Received',history:[{status:'Received',at:created}],serviceId:txt(x.serviceId||'',100),planId:txt(x.planId||'',100),plan:txt(x.plan||'',90),external:'sb-'+key.slice(-40),erpId:null};
+          try{await store.save(key,record,0,event('Quotes','Received quote',service+' · '+(record.source||'Direct'),'Customer portal'));inserted=true}catch(e){if(e.status!==409)throw e;old=await store.get(key)}
         }
         if(!inserted&&(old.data?.customerId||'')!==(user.id||''))fail('Use the original account or start a new quote.',409);
         let delivery;
         try{delivery=await sendReceipt(store,env,key,u.origin)}catch{delivery='Not sent'}
-        if(inserted&&integration(env).canSync){try{await sync(env,store,key)}catch{/* Still available for retry in the inbox. */}}
+        if(inserted&&integration(env).canSync){try{await sync(env,store,key)}catch(err){try{const cur=await store.get(key);if(cur.data&&!cur.data.erpId)await store.save(key,{...cur.data,erpError:String(err?.message||'Sync failed').slice(0,200)},cur.version)}catch{}}}
         const reply=json({code,emailStatus:delivery},inserted?201:200);
         if(account.cookie)reply.headers.set('Set-Cookie',account.cookie);return reply;
       }
