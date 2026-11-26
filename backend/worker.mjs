@@ -18,16 +18,34 @@ async function body(req,max=140000){
   let total=0;const chunks=[];for(;;){const {done,value}=await reader.read();if(done)break;total+=value.length;if(total>max){await reader.cancel();fail('Request too large.',413)}chunks.push(value)}
   try{return JSON.parse(await new Blob(chunks).text())}catch{fail('Invalid request.')}
 }
-function integration(env){
-  let u;try{u=new URL(env.SERVICEHUB_API_URL)}catch{return {}}
+function parseErpUrl(apiUrl,apiKey){
+  let u;try{u=new URL(apiUrl)}catch{return {}}
   const match=u.pathname.match(/^(.*?)\/api\/v1\/([a-zA-Z0-9_-]+)\/?$/);
   if(u.protocol!=='https:'||u.username||u.password||u.search||u.hash||!match)return {};
   const root=u.origin+match[1],tenant=match[2];
-  return {portal:root+'/portal/'+tenant,stripeTest:root+'/api/stripe/'+tenant+'/test',stripeLive:root+'/api/stripe/'+tenant+'/live',canSync:/^shw_[\w-]{43}$/.test(env.SERVICEHUB_API_KEY||'')};
+  return {portal:root+'/portal/'+tenant,stripeTest:root+'/api/stripe/'+tenant+'/test',stripeLive:root+'/api/stripe/'+tenant+'/live',canSync:/^shw_[\w-]{43}$/.test(apiKey||'')};
+}
+function integration(env){
+  return parseErpUrl(env.SERVICEHUB_API_URL,env.SERVICEHUB_API_KEY);
+}
+async function erpCipher(env){
+  const raw=env.MAIL_SETTINGS_KEY||env.ADMIN_PASSWORD||'servicebay-erp-key';
+  return crypto.subtle.importKey('raw',await crypto.subtle.digest('SHA-256',new TextEncoder().encode(raw)),'AES-GCM',false,['encrypt','decrypt']);
+}
+async function erpCredentials(store,env){
+  const saved=(await store.get('security/erp')).data||{};
+  if(saved.deleted&&!saved.apiUrl)return {apiUrl:'',apiKey:'',paused:false,source:'none',lastCheck:saved.lastCheck||null};
+  if(saved.apiUrl&&saved.secret&&saved.iv){
+    try{
+      const dec=await crypto.subtle.decrypt({name:'AES-GCM',iv:bytes(saved.iv)},await erpCipher(env),bytes(saved.secret));
+      return {apiUrl:saved.apiUrl,apiKey:new TextDecoder().decode(dec),paused:!!saved.paused,source:'studio',lastCheck:saved.lastCheck||null};
+    }catch{}
+  }
+  return {apiUrl:env.SERVICEHUB_API_URL||'',apiKey:env.SERVICEHUB_API_KEY||'',paused:!!saved.paused,source:env.SERVICEHUB_API_URL?'env':'none',lastCheck:saved.lastCheck||null};
 }
 async function erpState(store,env){
-  const base=integration(env),saved=(await store.get('security/erp')).data||{};
-  return {...base,paused:!!saved.paused,canSync:!saved.paused&&!!base.canSync,lastCheck:saved.lastCheck||null};
+  const creds=await erpCredentials(store,env),base=parseErpUrl(creds.apiUrl,creds.apiKey);
+  return {...base,apiUrl:creds.apiUrl,source:creds.source,paused:creds.paused,canSync:!creds.paused&&!!base.canSync,lastCheck:creds.lastCheck};
 }
 async function basic(request,env,store,identity){
   const auth=request.headers.get('authorization')||'';
@@ -43,10 +61,10 @@ async function requestKey(code){const match=receiptPattern.exec(code);if(!match)
 async function sync(env,store,key) {
   const entry=await store.get(key);if(!entry.data)fail('Request not found.',404);
   if(entry.data.erpId)return entry;
-  const erp=await erpState(store,env);
-  if(erp.paused)fail('ServiceHub ERP sync is disconnected in Studio > Integrations.',503);
-  if(!erp.canSync)fail('Add the ServiceHub API URL and integration key to enable delivery.',503);
-  const r=entry.data,c=createServiceHubClient({baseUrl:env.SERVICEHUB_API_URL,apiKey:env.SERVICEHUB_API_KEY});
+  const creds=await erpCredentials(store,env),base=parseErpUrl(creds.apiUrl,creds.apiKey);
+  if(creds.paused)fail('ServiceHub ERP sync is disconnected in Studio > Integrations.',503);
+  if(!base.canSync)fail('Add the ServiceHub API URL and integration key to enable delivery.',503);
+  const r=entry.data,c=createServiceHubClient({baseUrl:creds.apiUrl,apiKey:creds.apiKey});
   const attr=[r.source?'Source: '+r.source:'',r.medium?'Medium: '+r.medium:'',r.campaign?'Campaign: '+r.campaign:'',r.device?'Device: '+r.device:''].filter(Boolean).join(' | ');
   const fullMsg=attr?(r.message+'\n\n['+attr+']'):r.message;
   let response;
@@ -141,7 +159,27 @@ export async function serve(request,env,store,platform){
     if(path==='/api/admin/erp'){
       if(method==='GET')return json(await erpState(store,env));
       if(method==='POST'){
-        const input=await body(request,1024),row=await store.get('security/erp'),cur=row.data||{};
+        const input=await body(request,2048),row=await store.get('security/erp'),cur=row.data||{};
+        if(input.action==='save'){
+          const apiUrl=String(input.apiUrl||'').trim().replace(/\/$/,'');
+          const apiKey=String(input.apiKey||'').trim();
+          const parsed=parseErpUrl(apiUrl,apiKey||'shw_'+'a'.repeat(43));
+          if(!parsed.portal)fail('Enter a valid HTTPS ServiceHub API URL (e.g. https://host/api/v1/company-slug).');
+          let secret=cur.secret,iv=cur.iv;
+          if(apiKey){
+            if(!/^shw_[\w-]{43}$/.test(apiKey))fail('Enter a valid ServiceHub API key (starts with shw_).');
+            const ivBytes=crypto.getRandomValues(new Uint8Array(12));
+            const enc=await crypto.subtle.encrypt({name:'AES-GCM',iv:ivBytes},await erpCipher(env),new TextEncoder().encode(apiKey));
+            iv=btoa(String.fromCharCode(...ivBytes));
+            secret=btoa(String.fromCharCode(...new Uint8Array(enc)));
+          }else if(!secret)fail('Enter your ServiceHub API key.');
+          await store.save('security/erp',{apiUrl,iv,secret,paused:false,deleted:false,lastCheck:null},row.version,event('Website','Saved ServiceHub ERP connection',apiUrl));
+          return json(await erpState(store,env));
+        }
+        if(input.action==='delete'){
+          await store.save('security/erp',{deleted:true,paused:false},row.version,event('Website','Deleted ServiceHub ERP connection'));
+          return json(await erpState(store,env));
+        }
         if(input.action==='disconnect'){
           await store.save('security/erp',{...cur,paused:true},row.version,event('Website','Disconnected ServiceHub ERP sync'));
           return json(await erpState(store,env));
@@ -151,11 +189,11 @@ export async function serve(request,env,store,platform){
           return json(await erpState(store,env));
         }
         if(input.action==='test'){
-          const base=integration(env);
-          if(!base.canSync)fail('Configure SERVICEHUB_API_URL and SERVICEHUB_API_KEY first.',409);
+          const creds=await erpCredentials(store,env),base=parseErpUrl(creds.apiUrl,creds.apiKey);
+          if(!base.canSync)fail('Add a ServiceHub API URL and API key first.',409);
           let status='Unreachable';
           try{
-            const res=await fetch(env.SERVICEHUB_API_URL.replace(/\/$/,'')+'/requests/999999999',{headers:{Authorization:'Bearer '+env.SERVICEHUB_API_KEY},signal:AbortSignal.timeout(8000),redirect:'error'});
+            const res=await fetch(creds.apiUrl.replace(/\/$/,'')+'/requests/999999999',{headers:{Authorization:'Bearer '+creds.apiKey},signal:AbortSignal.timeout(8000),redirect:'error'});
             if(res.status===401||res.status===403)status='Revoked / Unauthorized ('+res.status+')';
             else if(res.ok||res.status===404||res.status===400)status='Connected';
             else status='Provider error ('+res.status+')';
@@ -312,7 +350,7 @@ export async function serve(request,env,store,platform){
       if(path==='/api/portal/track'){
         const row=(await store.get(key)).data;if(!row)fail('No matching request was found.',404);
         let status=row.status,reference;
-        if(row.erpId&&integration(env).canSync){try{const v=await createServiceHubClient({baseUrl:env.SERVICEHUB_API_URL,apiKey:env.SERVICEHUB_API_KEY}).status(row.erpId);status=v.service_request?.status||v.lead?.stage||status;reference=v.service_request?.reference||v.lead?.reference}catch{}}
+        if(row.erpId){const creds=await erpCredentials(store,env);if(!creds.paused&&parseErpUrl(creds.apiUrl,creds.apiKey).canSync){try{const v=await createServiceHubClient({baseUrl:creds.apiUrl,apiKey:creds.apiKey}).status(row.erpId);status=v.service_request?.status||v.lead?.stage||status;reference=v.service_request?.reference||v.lead?.reference}catch{}}}
         return json({status,reference,created:row.created});
       }
       if(path==='/api/portal/requests'){

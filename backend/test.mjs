@@ -381,6 +381,10 @@ test('Traffic source & device attribution tracks visits, compares platforms in a
     assert.equal(disc.paused,true);assert.equal(disc.canSync,false);
     const rec=await (await call('/api/admin/erp',{admin:true,config:erpCfg,post:{action:'reconnect'}})).json();
     assert.equal(rec.paused,false);assert.equal(rec.canSync,true);
+    const del=await (await call('/api/admin/erp',{admin:true,config:erpCfg,post:{action:'delete'}})).json();
+    assert.equal(del.canSync,false);assert.equal(del.source,'none');
+    const saved=await (await call('/api/admin/erp',{admin:true,config:erpCfg,post:{action:'save',apiUrl:'https://erp.new/api/v1/new-co',apiKey:'shw_'+'c'.repeat(43)}})).json();
+    assert.equal(saved.canSync,true);assert.equal(saved.source,'studio');assert.match(saved.portal,/new-co/);
   }finally{globalThis.fetch=original}
 });
 

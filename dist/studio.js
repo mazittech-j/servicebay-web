@@ -100,17 +100,29 @@
       const erpChips=el('div',undefined,'env-list');
       const syncLabel=i.paused?'Disconnected (Paused)':i.canSync?(i.lastCheck?.status?.startsWith('Revoked')?i.lastCheck.status:'Active'):'Not configured';
       erpChips.append(el('span','Database: '+cfg.storage,'status-chip'),el('span','ERP sync: '+syncLabel,'status-chip'));
+      if(i.source&&i.source!=='none')erpChips.append(el('span','Source: '+(i.source==='studio'?'Saved in studio':'Host env'),'status-chip'));
       if(i.lastCheck)erpChips.append(el('span','Last check: '+i.lastCheck.status+' · '+stamp(i.lastCheck.at),'status-chip'));
-      erpBox.append(erpChips,el('p','Configure SERVICEHUB_API_URL and SERVICEHUB_API_KEY on your hosting provider. ServiceHub handles customer accounts and Stripe payments.'));
-      const erpActs=[];
+      erpBox.append(erpChips,el('p','Connect your ServiceHub ERP API URL and integration key below (or via host environment variables).'));
+      const erpGrid=el('div',undefined,'fields');erpBox.append(erpGrid);
+      const urlIn=field(erpGrid,'ServiceHub API URL',i.apiUrl||'','url');urlIn.placeholder='https://servicehub-client.onrender.com/api/v1/your-company';
+      const keyIn=secret(erpGrid,'ServiceHub API key',i.canSync||i.paused?'Leave blank to keep current key, or paste new shw_…':'shw_…');
+      const erpActs=[button('Save ERP connection',async()=>{
+        const next=await api('erp',{action:'save',apiUrl:urlIn.value,apiKey:keyIn.value});
+        dirty=false;drawErp(next);notice.textContent='ServiceHub ERP connection saved.';
+      },'primary')];
       if(i.portal||i.canSync||i.paused){
         if(!i.paused)erpActs.push(button('Verify connection',async()=>{const next=await api('erp',{action:'test'});drawErp(next);notice.textContent='ERP connection check: '+(next.lastCheck?.status||'Done')+'.'},'secondary'));
         erpActs.push(button(i.paused?'Reconnect ERP':'Disconnect ERP',async()=>{
           const next=await api('erp',{action:i.paused?'reconnect':'disconnect'});
           drawErp(next);notice.textContent=next.paused?'ServiceHub ERP sync disconnected.':'ServiceHub ERP sync re-enabled.';
-        },i.paused?'primary':'secondary'));
+        },'secondary'));
+        erpActs.push(button('Delete connection',async()=>{
+          if(!window.confirm('Delete the saved ServiceHub ERP connection?'))return;
+          const next=await api('erp',{action:'delete'});
+          dirty=false;drawErp(next);notice.textContent='ServiceHub ERP connection deleted.';
+        },'secondary'));
       }
-      if(erpActs.length)buttons(erpBox,...erpActs);
+      buttons(erpBox,...erpActs);
       if(i.portal){const a=el('a','Open ServiceHub customer login');a.href=i.portal;erpBox.append(a);for(const [label,key] of [['Stripe test webhook','stripeTest'],['Stripe live webhook','stripeLive']]){const f=field(erpBox,label,i[key]);f.readOnly=true}}
     };
     drawErp(cfg.integrations||{});
