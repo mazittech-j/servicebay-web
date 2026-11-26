@@ -21,6 +21,11 @@
   const params = new URLSearchParams(location.hash.slice(1));
   const inviteToken = params.get('invite');
   const resetToken = params.get('reset');
+  if (params.get('timeout') === '1') {
+    history.replaceState(null, '', location.pathname);
+    const st = form.querySelector('.result');
+    if (st) st.textContent = 'You were signed out after 30 minutes of inactivity.';
+  }
   let challenge = '';
 
   const eyeBtn = '<button type="button" class="pw-toggle" aria-label="Show password" aria-pressed="false">Show</button>';

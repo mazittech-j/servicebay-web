@@ -519,5 +519,21 @@
 
   document.querySelector('#navigation').onclick=e=>{const n=e.target.closest('[data-tab]');if(n&&discard())open(n.dataset.tab).catch(e=>notice.textContent=e.message)};
   by('studio-logout').onclick=async()=>{if(!discard())return;try{const res=await fetch('/api/studio-auth/logout',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});if(!res.ok)throw Error('Sign out failed.');dirty=false;location.replace('/admin/')}catch(e){notice.textContent=e.message}};
+  const IDLE_MS=1800000;let lastActive=Date.now(),lastPing=Date.now();
+  const markActive=()=>{lastActive=Date.now()};
+  for(const ev of ['pointerdown','keydown','mousemove','scroll','touchstart'])window.addEventListener(ev,markActive,{passive:true});
+  setInterval(async()=>{
+    const idle=Date.now()-lastActive;
+    if(idle>=IDLE_MS){
+      dirty=false;
+      try{await fetch('/api/studio-auth/logout',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})}catch{}
+      location.replace('/admin/#timeout=1');
+      return;
+    }
+    if(idle<60000&&Date.now()-lastPing>=300000){
+      lastPing=Date.now();
+      fetch('/api/admin/state').then(r=>{if(r.status===401){dirty=false;location.replace('/admin/#timeout=1')}}).catch(()=>{});
+    }
+  },30000);
   api('state').then(async x=>{cfg=x;try{const sp=await api('studio-prefs');if(sp&&Object.keys(sp).length)applyStudioPrefs(sp)}catch{}const h=location.hash.slice(1);const firstTab=cfg.user.role==='owner'?(Object.hasOwn(titles,h)?h:'overview'):((cfg.user.permissions?.includes(h)||h==='security2fa')?h:(cfg.user.permissions?.[0]||'pages'));await open(firstTab)}).catch(e=>notice.textContent=e.message);
 })();
