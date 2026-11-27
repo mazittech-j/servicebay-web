@@ -138,17 +138,22 @@ async function pullErpPricing(env,store,client,{quiet=false,preloadedList=null}=
       const norm=name.toLowerCase();
       matchKey=Object.keys(draft.pricing).find(k=>(draft.pricing[k]?.name||'').trim().toLowerCase()===norm)||'';
     }
+    const isActive=!(item.active===false||item.is_active===false||/^(inactive|disabled|archived)$/i.test(String(item.status||'')));
     if(matchKey){
-      const prevRate=Number(draft.pricing[matchKey]?.rate),prevName=draft.pricing[matchKey]?.name;
+      const prevRate=Number(draft.pricing[matchKey]?.rate),prevName=draft.pricing[matchKey]?.name,prevActive=draft.pricing[matchKey]?.active!==false;
       const nextName=name||prevName;
-      if(prevRate!==Math.round(rate*100)/100||prevName!==nextName||Number(live.pricing[matchKey]?.rate)!==Math.round(rate*100)/100){
-        draft.pricing[matchKey]={...draft.pricing[matchKey],rate,name:nextName};
-        live.pricing[matchKey]={...(live.pricing[matchKey]||draft.pricing[matchKey]),rate,name:nextName};
+      if(prevRate!==Math.round(rate*100)/100||prevName!==nextName||prevActive!==isActive||Number(live.pricing[matchKey]?.rate)!==Math.round(rate*100)/100){
+        const upd={...draft.pricing[matchKey],rate,name:nextName};
+        if(!isActive)upd.active=false;else delete upd.active;
+        draft.pricing[matchKey]=upd;
+        const liveUpd={...(live.pricing[matchKey]||upd),rate,name:nextName};
+        if(!isActive)liveUpd.active=false;else delete liveUpd.active;
+        live.pricing[matchKey]=liveUpd;
         updatedCount++;
       }
     }else if(name){
       const newKey='custom-'+crypto.randomUUID().replaceAll('-','');
-      const entry={kind:isPlan?'plan':'service',name,rate,description:txt(String(item.description||''),300),unit:txt(String(item.unit||'Units'),30),sectors:Array.isArray(item.sectors)&&item.sectors.length?item.sectors:['residential','commercial','industrial']};
+      const entry={kind:isPlan?'plan':'service',name,rate,...(!isActive?{active:false}:{}),description:txt(String(item.description||''),300),unit:txt(String(item.unit||'Units'),30),sectors:Array.isArray(item.sectors)&&item.sectors.length?item.sectors:['residential','commercial','industrial']};
       draft.pricing[newKey]=entry;
       live.pricing[newKey]=structuredClone(entry);
       updatedCount++;
@@ -262,7 +267,8 @@ export async function serve(request,env,store,platform){
       }
       try{
         const erpRow=await store.get('security/erp'),cur=erpRow.data||{};
-        await store.save('security/erp',{...cur,lastWebhook:{at:new Date().toISOString(),event:eventName}},erpRow.version);
+        const keys=payload&&typeof payload==='object'?Object.keys(payload).slice(0,10).join(', '):'';
+        await store.save('security/erp',{...cur,lastWebhook:{at:new Date().toISOString(),event:eventName,pricesUpdated,statusUpdated,keys}},erpRow.version);
       }catch{}
       return json({ok:true,event:eventName,pricesUpdated,statusUpdated});
     }

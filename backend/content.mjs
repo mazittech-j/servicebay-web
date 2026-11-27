@@ -76,7 +76,14 @@ export function renderPage(html,settings,page,editing=false){
   if(s.logo!==defaults.logo)for(const img of d.querySelectorAll('.brand img,.ar-header img[src="/assets/servicebay-wordmark.webp"]')){img.setAttribute('src',s.logo);img.setAttribute('alt',s.name)}
   const money=new Intl.NumberFormat('en-AE',{style:'currency',currency:'AED',currencyDisplay:'code'});
   for(const [key,v] of Object.entries(s.pricing||{})){
-    const base=pricing[key];if(!base){addCustomToPage(d,key,v,money);continue}if(v.name===base.name&&v.rate===base.rate)continue;
+    const base=pricing[key];if(!base){addCustomToPage(d,key,v,money);continue}
+    if(v.active===false){
+      for(const field of d.querySelectorAll('option[value="'+key+'"]'))field.remove();
+      d.querySelector('.amc-tier-'+key)?.remove();
+      for(const radio of d.querySelectorAll('input[name="amc"][value="'+key+'"]'))radio.closest('label')?.remove();
+      continue;
+    }
+    if(v.name===base.name&&v.rate===base.rate)continue;
     for(const field of d.querySelectorAll('option[value="'+key+'"]')){if(field.hasAttribute('data-rate'))field.setAttribute('data-rate',v.rate);field.textContent=v.name}
     const tier=d.querySelector('.amc-tier-'+key);
     if(tier){tier.querySelector('h3').textContent=v.name;const price=tier.querySelector('[data-annual-rate]');price.setAttribute('data-annual-rate',v.rate);price.textContent=money.format(v.rate);tier.querySelector('[data-amc-plan]').textContent='Choose '+v.name}

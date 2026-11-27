@@ -64,10 +64,14 @@
           const block=card(entries,label);
           for(const [key,v] of Object.entries(data.pricing)){
             const original=cfg.defaults.pricing[key];if((v.kind||original?.kind)!==kind)continue;
-            const row=el('details',undefined,'price-entry');row.open=focus===key;const summary=el('summary');summary.append(el('strong',v.name||'New '+kind),el('span',v.rate?'AED '+Number(v.rate).toLocaleString():'Set price','amount-chip'));row.append(summary);block.append(row);
+            const chipText=()=>(v.active===false?'Inactive · ':'')+(v.rate?'AED '+Number(v.rate).toLocaleString():'Set price');
+            const row=el('details',undefined,'price-entry');row.open=focus===key;const summary=el('summary');summary.append(el('strong',v.name||'New '+kind),el('span',chipText(),'amount-chip'));row.append(summary);block.append(row);
             const fields=el('div',undefined,'fields');row.append(fields);
             const name=bind(field(fields,'Display name',v.name),'name',v);name.maxLength=80;name.oninput=()=>summary.firstChild.textContent=name.value||'New '+kind;
-            const price=bind(field(fields,kind==='plan'?'Annual price per unit (AED)':'Price per unit (AED)',v.rate||'','number'),'rate',v);price.min=.01;price.step=.01;price.oninput=()=>summary.lastChild.textContent='AED '+(price.value||'0');
+            const price=bind(field(fields,kind==='plan'?'Annual price per unit (AED)':'Price per unit (AED)',v.rate||'','number'),'rate',v);price.min=.01;price.step=.01;price.oninput=()=>summary.lastChild.textContent=chipText();
+            const activeLbl=el('label',undefined,'check'),activeChk=el('input');activeChk.type='checkbox';activeChk.checked=v.active!==false;
+            activeChk.onchange=()=>{if(activeChk.checked)delete v.active;else v.active=false;dirty=true;summary.lastChild.textContent=chipText()};
+            activeLbl.append(activeChk,document.createTextNode(' Active (visible on website)'));row.append(activeLbl);
             if(!original){if(kind==='service'){bind(field(row,'Quantity label',v.unit),'unit',v);const box=el('fieldset');box.append(el('legend','Property categories'));row.append(box);for(const sector of ['residential','commercial','industrial']){const label=el('label',undefined,'check'),check=el('input');check.type='checkbox';check.checked=v.sectors.includes(sector);check.onchange=()=>{v.sectors=v.sectors.filter(x=>x!==sector);if(check.checked)v.sectors.push(sector)};label.append(check,document.createTextNode(sector));box.append(label)}}else bind(field(row,'Plan coverage or description',v.description,'textarea'),'description',v);
               buttons(row,button('Remove item',()=>{delete data.pricing[key];dirty=true;draw()}))}
             if(focus===key){name.focus();row.scrollIntoView({block:'center'})}
@@ -103,7 +107,7 @@
       if(i.source&&i.source!=='none')erpChips.append(el('span','Source: '+(i.source==='studio'?'Saved in studio':'Host env'),'status-chip'));
       if(i.lastCheck)erpChips.append(el('span','Last check: '+i.lastCheck.status+' · '+stamp(i.lastCheck.at),'status-chip'));
       if(i.lastSync)erpChips.append(el('span','Last sync: '+i.lastSync.sent+' sent, '+i.lastSync.updated+' updated, '+i.lastSync.pricesUpdated+' prices · '+stamp(i.lastSync.at),'status-chip'));
-      if(i.lastWebhook)erpChips.append(el('span','Last webhook: '+i.lastWebhook.event+' · '+stamp(i.lastWebhook.at),'status-chip'));
+      if(i.lastWebhook)erpChips.append(el('span','Last webhook: '+i.lastWebhook.event+(i.lastWebhook.pricesUpdated!==undefined?' ('+i.lastWebhook.pricesUpdated+' prices'+(i.lastWebhook.keys?' · keys: '+i.lastWebhook.keys:'')+')':'')+' · '+stamp(i.lastWebhook.at),'status-chip'));
       erpBox.append(erpChips,el('p','Connect your ServiceHub ERP API URL and integration key below. New quotes, status changes, and periodic updates sync automatically when Auto-sync is on, or click Push & Sync All anytime.'));
       const erpGrid=el('div',undefined,'fields');erpBox.append(erpGrid);
       const urlIn=field(erpGrid,'ServiceHub API URL',i.apiUrl||'','url');urlIn.placeholder='https://servicehub-client.onrender.com/api/v1/your-company';

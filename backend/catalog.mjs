@@ -8,7 +8,7 @@ export function catalog(input,base,fail){
     if(!original&&!/^custom-[a-f0-9]{32}$/.test(id))fail('Invalid custom item ID.');
     const name=typeof item?.name==='string'?item.name.trim():'',rate=Number(item?.rate),kind=original?.kind||item?.kind;
     if(!name||name.length>80||!Number.isFinite(rate)||rate<.01||rate>10000000||!kinds.has(kind))fail('Each item needs a name, a type and a positive AED price.');
-    result[id]={name,rate:Math.round(rate*100)/100,kind};
+    result[id]={name,rate:Math.round(rate*100)/100,kind,...(item?.active===false?{active:false}:{})};
     if(!original){
       const detail=String(item.description||'').trim(),unit=String(item.unit||'Units').trim();
       if(!unit||unit.length>50||detail.length>400)fail('Check the item description and unit label.');
@@ -20,6 +20,7 @@ export function catalog(input,base,fail){
   return result;
 }
 export function addCustomToPage(d,id,item,money){
+  if(item.active===false)return;
   const add=(parent,tag,text)=>{const n=d.createElement(tag);if(text)n.textContent=text;parent.append(n);return n};
   function option(select){const opt=add(select,'option',item.name);opt.setAttribute('value',id);return opt}
   if(item.kind==='service'){
