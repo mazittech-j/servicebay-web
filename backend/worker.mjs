@@ -99,17 +99,25 @@ async function sync(env,store,key) {
   for(let n=0;n<3;n++){const next=await store.get(key);if(next.data.erpId)return next;try{const upd={...next.data,erpId,erpSyncedStatus:next.data.status||'New'};delete upd.erpError;await store.save(key,upd,next.version,event('Quotes','Sent quote to ServiceHub',r.service||'Service quote'));return await store.get(key)}catch(e){if(e.status!==409)throw e}}
   fail('Reload and retry delivery.',409);
 }
-function extractErpCatalogItems(payload){
-  if(!payload||typeof payload!=='object')return null;
+function extractErpCatalogItems(payload,depth=0){
+  if(!payload||typeof payload!=='object'||depth>3)return null;
   if(Array.isArray(payload))return payload;
   const out=[];let found=false;
   const addArr=(arr,kindHint)=>{if(Array.isArray(arr)){found=true;for(const x of arr)out.push(kindHint&&x&&typeof x==='object'&&!x.kind?{...x,kind:kindHint}:x)}};
-  addArr(payload.services);addArr(payload.pricing);addArr(payload.catalog);addArr(payload.items);addArr(payload.rates);
-  addArr(payload.plans,'plan');addArr(payload.amc_plans,'plan');addArr(payload.amcPlans,'plan');
+  for(const k of ['services','items','rates','pricing','catalog']){
+    const v=payload[k];
+    if(Array.isArray(v))addArr(v);
+    else if(v&&typeof v==='object'){const nested=extractErpCatalogItems(v,depth+1);if(nested){found=true;out.push(...nested)}}
+  }
+  for(const k of ['plans','amc_plans','amcPlans','amc']){
+    const v=payload[k];
+    if(Array.isArray(v))addArr(v,'plan');
+    else if(v&&typeof v==='object'){const nested=extractErpCatalogItems(v,depth+1);if(nested){found=true;for(const x of nested)out.push(x&&typeof x==='object'&&!x.kind?{...x,kind:'plan'}:x)}}
+  }
   if(payload.service&&typeof payload.service==='object'){found=true;out.push(payload.service)}
   if(payload.plan&&typeof payload.plan==='object'){found=true;out.push({...payload.plan,kind:payload.plan.kind||'plan'})}
   if(payload.data&&typeof payload.data==='object'){
-    const nested=extractErpCatalogItems(payload.data);
+    const nested=extractErpCatalogItems(payload.data,depth+1);
     if(nested){found=true;out.push(...nested)}
   }
   return found?out:null;
@@ -125,8 +133,8 @@ async function pullErpPricing(env,store,client,{quiet=false,preloadedList=null}=
   let updatedCount=0;
   for(const item of list){
     if(!item||typeof item!=='object')continue;
-    const name=txt(String(item.name||item.title||item.service_name||item.plan_name||item.label||item.display_name||item.service||''),80);
-    const rawRate=item.rate??item.price??item.unit_price??item.unitPrice??item.base_price??item.basePrice??item.annual_price??item.annualPrice??item.monthly_price??item.price_aed??item.rate_aed??item.amount??item.fee??item.cost??0;
+    const name=String(item.name||item.title||item.service_name||item.plan_name||item.label||item.display_name||item.service||'').trim().slice(0,80);
+    const rawRate=item.rate??item.price??item.unit_price??item.unitPrice??item.base_price??item.basePrice??item.base_rate??item.default_rate??item.unit_cost??item.price_per_unit??item.annual_price??item.annualPrice??item.annual_rate??item.yearly_price??item.monthly_price??item.hourly_rate??item.visit_fee??item.price_aed??item.rate_aed??item.amount??item.fee??item.cost??0;
     const rate=typeof rawRate==='number'?rawRate:Number(String(rawRate).replace(/[^0-9.]/g,''));
     if(!Number.isFinite(rate)||rate<=0)continue;
     const rawKind=String(item.kind||item.type||item.category||'').toLowerCase();
@@ -153,7 +161,7 @@ async function pullErpPricing(env,store,client,{quiet=false,preloadedList=null}=
       }
     }else if(name){
       const newKey='custom-'+crypto.randomUUID().replaceAll('-','');
-      const entry={kind:isPlan?'plan':'service',name,rate,...(!isActive?{active:false}:{}),description:txt(String(item.description||''),300),unit:txt(String(item.unit||'Units'),30),sectors:Array.isArray(item.sectors)&&item.sectors.length?item.sectors:['residential','commercial','industrial']};
+      const entry={kind:isPlan?'plan':'service',name,rate,...(!isActive?{active:false}:{}),description:String(item.description||'').trim().slice(0,300),unit:String(item.unit||'Units').trim().slice(0,30)||'Units',sectors:Array.isArray(item.sectors)&&item.sectors.length?item.sectors:['residential','commercial','industrial']};
       draft.pricing[newKey]=entry;
       live.pricing[newKey]=structuredClone(entry);
       updatedCount++;
@@ -234,16 +242,19 @@ export async function serve(request,env,store,platform){
       if(method==='GET'||method==='HEAD')return json({ok:true,ready:true});
       let payload={};try{payload=await body(request,256000)}catch{payload={}}
       const eventName=txt(String(payload.event||payload.type||payload.action||'webhook'),60)||'webhook';
-      let pricesUpdated=0,statusUpdated=0;
+      let pricesUpdated=0,statusUpdated=0,whErr='';
       const rawList=extractErpCatalogItems(payload);
       if(rawList){
-        const pr=await pullErpPricing(env,store,null,{quiet:false,preloadedList:rawList});
-        pricesUpdated=pr.updatedCount;
+        try{
+          const pr=await pullErpPricing(env,store,null,{quiet:false,preloadedList:rawList});
+          pricesUpdated=pr.updatedCount;
+        }catch(e){whErr=String(e?.message||'Pricing update failed').slice(0,120)}
       }else if(/service|pric|plan|catalog/i.test(eventName)&&parseErpUrl(creds.apiUrl,creds.apiKey).canSync){
         try{
           const pr=await pullErpPricing(env,store,createServiceHubClient({baseUrl:creds.apiUrl,apiKey:creds.apiKey}),{quiet:false});
           pricesUpdated=pr.updatedCount;
-        }catch{}
+          if(pr.unsupported)whErr='No /catalog or /services endpoint on ERP';
+        }catch(e){whErr=String(e?.message||'Pricing pull failed').slice(0,120)}
       }
       const obj=payload.service_request||payload.enquiry||payload.request||payload.lead||payload.data||payload;
       const rawStatus=txt(String(obj?.status||obj?.stage||payload.status||''),40);
@@ -268,7 +279,7 @@ export async function serve(request,env,store,platform){
       try{
         const erpRow=await store.get('security/erp'),cur=erpRow.data||{};
         const keys=payload&&typeof payload==='object'?Object.keys(payload).slice(0,10).join(', '):'';
-        await store.save('security/erp',{...cur,lastWebhook:{at:new Date().toISOString(),event:eventName,pricesUpdated,statusUpdated,keys}},erpRow.version);
+        await store.save('security/erp',{...cur,lastWebhook:{at:new Date().toISOString(),event:eventName,pricesUpdated,statusUpdated,keys,...(whErr?{error:whErr}:{})}},erpRow.version);
       }catch{}
       return json({ok:true,event:eventName,pricesUpdated,statusUpdated});
     }
