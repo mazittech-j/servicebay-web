@@ -115,7 +115,7 @@ export async function testSender(db,env,user){
     if(res.ok)status='Accepted';
     else{
       const st=res.response.status;
-      status=st===401?'Invalid sending key':st===403?(res.errorMsg||'Check key permissions and sender domain'):st===429?'Provider rate limit':('Provider error ('+st+')'+(res.errorMsg?': '+String(res.errorMsg).slice(0,90):''));
+      status=st===401?('Invalid sending key'+(res.errorMsg?': '+String(res.errorMsg).slice(0,90):'')):st===403?(res.errorMsg||'Check key permissions and sender domain'):st===429?'Provider rate limit':('Provider error ('+st+')'+(res.errorMsg?': '+String(res.errorMsg).slice(0,90):''));
     }
   }catch{/* A timeout cannot establish delivery. */}
   await db.save('security/mail-test',{from:config.from,revision:row.version,at,status},old.version,event('Email','Tested receipt sender',status));
