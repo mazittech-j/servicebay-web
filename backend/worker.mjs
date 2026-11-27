@@ -82,7 +82,14 @@ async function sync(env,store,key) {
   const baseMsg=r.message||'';
   const fullMsg=attr?(baseMsg?baseMsg+'\n\n['+attr+']':'['+attr+']'):baseMsg;
   let response;
-  try{response=await c.submit('enquiries',extId,{external_id:extId,name:r.name,email:r.email,phone:r.phone,message:fullMsg,source:r.source||'Direct',medium:r.medium||'',campaign:r.campaign||'',device:r.device||'',service:r.service||'',area:r.area||'',property:r.property||'',country:r.country||''})}catch(err){
+  const corePayload={external_id:extId,name:r.name,email:r.email,phone:r.phone,message:fullMsg};
+  const fullPayload={...corePayload,source:r.source||'Direct',medium:r.medium||'',campaign:r.campaign||'',device:r.device||'',service:r.service||'',area:r.area||'',property:r.property||'',country:r.country||''};
+  try{
+    try{response=await c.submit('enquiries',extId,fullPayload)}catch(e){
+      if(e?.status===400||e?.status===422)response=await c.submit('enquiries',extId,corePayload);
+      else throw e;
+    }
+  }catch(err){
     if(err?.status===401||err?.status===403){try{const row=await store.get('security/erp');const msg=err?.message?String(err.message).slice(0,120):'';const st=(err.status===403&&msg)?('Blocked (403): '+msg):('Revoked / Unauthorized ('+err.status+')'+(msg?': '+msg:''));await store.save('security/erp',{...row.data,lastCheck:{status:st,at:new Date().toISOString()}},row.version)}catch{}}
     fail(err?.message||'ServiceHub did not confirm delivery. The request is saved and can be retried.',502);
   }
