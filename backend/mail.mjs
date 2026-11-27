@@ -30,10 +30,11 @@ export async function mailSettings(db,env,input){
     let provider=key.startsWith('xkeysib-')?'brevo':key.startsWith('re_')?'resend':(input.provider==='brevo'?'brevo':input.provider==='resend'?'resend':(row.data?.provider||'resend'));
     let value={...row.data,from,provider,deleted:false};
     if(key){
-      const validBrevo=/^xkeysib-\S{16,300}$/.test(key);
+      if(key.startsWith('xsmtpsib-'))reject('You pasted a Brevo SMTP key (xsmtpsib-…). Open Brevo > SMTP & API > API Keys tab and generate an API key.');
       const validResend=/^re_[A-Za-z0-9_-]{10,160}$/.test(key);
-      if(!validBrevo&&!validResend)reject('Enter a valid Brevo (xkeysib-…) or Resend (re_…) API key.');
-      provider=validBrevo?'brevo':'resend';
+      const validBrevo=(provider==='brevo'||key.startsWith('xkeysib-'))&&!/\s/.test(key)&&key.length>=16&&key.length<=300;
+      if(!validBrevo&&!validResend)reject('Enter a valid Brevo or Resend (re_…) API key.');
+      provider=validResend?'resend':'brevo';
       const iv=crypto.getRandomValues(new Uint8Array(12));
       value={from,provider,deleted:false,iv:encode(iv),secret:encode(await crypto.subtle.encrypt({name:'AES-GCM',iv},await cipher(env),encoder.encode(key)))};
     }else if(!value.secret&&!env.RESEND_API_KEY&&!env.BREVO_API_KEY)reject('Add a sending API key.');
