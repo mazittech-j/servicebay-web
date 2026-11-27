@@ -83,7 +83,7 @@ async function sync(env,store,key) {
   const fullMsg=attr?(baseMsg?baseMsg+'\n\n['+attr+']':'['+attr+']'):baseMsg;
   let response;
   try{response=await c.submit('enquiries',extId,{external_id:extId,name:r.name,email:r.email,phone:r.phone,message:fullMsg,source:r.source||'Direct',medium:r.medium||'',campaign:r.campaign||'',device:r.device||'',service:r.service||'',area:r.area||'',property:r.property||'',country:r.country||''})}catch(err){
-    if(err?.status===401||err?.status===403){try{const row=await store.get('security/erp');await store.save('security/erp',{...row.data,lastCheck:{status:'Revoked / Unauthorized ('+err.status+')',at:new Date().toISOString()}},row.version)}catch{}}
+    if(err?.status===401||err?.status===403){try{const row=await store.get('security/erp');const msg=err?.message?String(err.message).slice(0,120):'';const st=(err.status===403&&msg)?('Blocked (403): '+msg):('Revoked / Unauthorized ('+err.status+')'+(msg?': '+msg:''));await store.save('security/erp',{...row.data,lastCheck:{status:st,at:new Date().toISOString()}},row.version)}catch{}}
     fail(err?.message||'ServiceHub did not confirm delivery. The request is saved and can be retried.',502);
   }
   const erpId=Number(response?.id??response?.enquiry?.id??response?.service_request?.id??response?.lead?.id);
@@ -325,14 +325,13 @@ export async function serve(request,env,store,platform){
             iv=btoa(String.fromCharCode(...ivBytes));
             secret=btoa(String.fromCharCode(...new Uint8Array(enc)));
           }else if(!secret)fail('Enter your ServiceHub API key.');
+          const readErr=async(r)=>{let m='';try{const d=await r.json();m=String(d?.error||d?.message||'').slice(0,120)}catch{}return r.status===401?('Revoked / Unauthorized (401)'+(m?': '+m:'')):r.status===403?(m?'Blocked (403): '+m:'Revoked / Unauthorized (403)'):('Provider error ('+r.status+')'+(m?': '+m:''))};
           let checkStatus='Unreachable';
           try{
             const res=await fetch(apiUrl+'/requests/999999999',{headers:{Authorization:'Bearer '+(apiKey||((await erpCredentials(store,env)).apiKey))},signal:AbortSignal.timeout(12000),redirect:'error'});
-            if(res.status===401||res.status===403)checkStatus='Revoked / Unauthorized ('+res.status+')';
-            else if(res.ok||res.status===404||res.status===400)checkStatus='Connected';
-            else checkStatus='Provider error ('+res.status+')';
+            checkStatus=(res.ok||res.status===404||res.status===400)?'Connected':await readErr(res);
           }catch{checkStatus='Connection timeout'}
-          await store.save('security/erp',{apiUrl,iv,secret,paused:false,deleted:false,lastCheck:{status:checkStatus,at:new Date().toISOString()}},row.version,event('Website','Saved ServiceHub ERP connection',apiUrl+' · '+checkStatus));
+          await store.save('security/erp',{...cur,apiUrl,iv,secret,paused:false,deleted:false,lastCheck:{status:checkStatus,at:new Date().toISOString()}},row.version,event('Website','Saved ServiceHub ERP connection',apiUrl+' · '+checkStatus));
           return json(await erpState(store,env));
         }
         if(input.action==='delete'){
@@ -353,9 +352,8 @@ export async function serve(request,env,store,platform){
           let status='Unreachable';
           try{
             const res=await fetch(creds.apiUrl.replace(/\/$/,'')+'/requests/999999999',{headers:{Authorization:'Bearer '+creds.apiKey},signal:AbortSignal.timeout(8000),redirect:'error'});
-            if(res.status===401||res.status===403)status='Revoked / Unauthorized ('+res.status+')';
-            else if(res.ok||res.status===404||res.status===400)status='Connected';
-            else status='Provider error ('+res.status+')';
+            if(res.ok||res.status===404||res.status===400)status='Connected';
+            else{let m='';try{const d=await res.json();m=String(d?.error||d?.message||'').slice(0,120)}catch{}status=res.status===401?('Revoked / Unauthorized (401)'+(m?': '+m:'')):res.status===403?(m?'Blocked (403): '+m:'Revoked / Unauthorized (403)'):('Provider error ('+res.status+')'+(m?': '+m:''))}
           }catch{status='Connection timeout'}
           await store.save('security/erp',{...cur,lastCheck:{status,at:new Date().toISOString()}},row.version,event('Website','Tested ServiceHub ERP connection',status));
           return json(await erpState(store,env));
