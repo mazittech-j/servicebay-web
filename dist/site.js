@@ -405,7 +405,8 @@ for (const form of enquiryForms) {
       const group=form.querySelector('fieldset'),submit=form.querySelector('.form-submit');group.disabled=true;output.textContent='Sending your request…';
       try{
         if(!receipt)receipt='SB-'+Date.now().toString(36).toUpperCase()+'-'+crypto.randomUUID().replaceAll('-','').toUpperCase();
-        const res=await fetch('/api/portal/requests',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:receipt,name:value('name'),email:value('email'),phone:value('mobile'),service,serviceId:value('service'),planId:value('plan'),plan:value('plan')?plan.selectedOptions[0].textContent:'',area:value('area'),property:value('property'),country:siteRegions[country.value].name,details:value('details'),slot:value('slot')||(params.get('visit')||'').trim().slice(0,120),schedule:value('schedule'),...siteAttribution,password:values.get('portalPassword')||'',_sb_hp:value('_sb_hp'),message})});
+        const photo=await readPhotoFile(fields.namedItem('photo'));
+        const res=await fetch('/api/portal/requests',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:receipt,name:value('name'),email:value('email'),phone:value('mobile'),service,serviceId:value('service'),planId:value('plan'),plan:value('plan')?plan.selectedOptions[0].textContent:'',area:value('area'),property:value('property'),country:siteRegions[country.value].name,details:value('details'),slot:value('slot')||(params.get('visit')||'').trim().slice(0,120),schedule:value('schedule'),...(photo?{photo}:{}),...siteAttribution,password:values.get('portalPassword')||'',_sb_hp:value('_sb_hp'),message})});
         let r={};try{r=await res.json()}catch{}
         if(!res.ok)throw Error(r.error||'Could not submit the request ('+res.status+'). Please try again.');
         sent=true;submit.disabled=true;review.hidden=true;try{sessionStorage.setItem('servicebay-receipt',r.code)}catch{}
@@ -478,6 +479,36 @@ for (const workflow of document.querySelectorAll('[data-workflow]')) {
   navigation.hidden = false;
 }
 
+async function readPhotoFile(input) {
+  const file = input?.files?.[0];
+  if (!file) return null;
+  if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+    throw Error('Choose a JPEG, PNG, or WebP photo.');
+  }
+  const toB64 = blob => new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(',')[1] || '');
+    r.onerror = () => reject(Error('Could not read the selected photo.'));
+    r.readAsDataURL(blob);
+  });
+  if (file.size <= 480000) return { data: await toB64(file), type: file.type };
+  const img = new Image();
+  const url = URL.createObjectURL(file);
+  try {
+    await new Promise((res, rej) => { img.onload = res; img.onerror = () => rej(Error('Invalid image file.')); img.src = url; });
+    const scale = Math.min(1, 1200 / Math.max(img.width, img.height, 1));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(img.width * scale));
+    canvas.height = Math.max(1, Math.round(img.height * scale));
+    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.82));
+    if (!blob || blob.size > 500000) throw Error('Photo must be under 500 KB.');
+    return { data: await toB64(blob), type: 'image/jpeg' };
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
 for (const cForm of document.querySelectorAll('form[data-complaint-form]')) {
   const out = cForm.querySelector('.form-status');
   const fs = cForm.querySelector('fieldset');
@@ -488,10 +519,11 @@ for (const cForm of document.querySelectorAll('form[data-complaint-form]')) {
     fs.disabled = true;
     out.textContent = 'Submitting to Customer Helpdesk…';
     try {
+      const photo = await readPhotoFile(cForm.elements.namedItem('photo'));
       const res = await fetch('/api/portal/complaints', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: val('name'), email: val('email'), phone: val('phone'), receipt: val('receipt'), category: val('category'), message: val('message'), _sb_hp: val('_sb_hp') })
+        body: JSON.stringify({ name: val('name'), email: val('email'), phone: val('phone'), receipt: val('receipt'), category: val('category'), message: val('message'), ...(photo ? { photo } : {}), _sb_hp: val('_sb_hp') })
       });
       let d = {}; try { d = await res.json(); } catch {}
       if (!res.ok) throw Error(d.error || 'Could not submit complaint.');

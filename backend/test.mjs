@@ -460,16 +460,22 @@ test('Traffic source & device attribution tracks visits, compares platforms in a
     const homeHtml=await (await call('/')).text();
     assert.match(homeHtml,/data-lang-select[\s\S]*English[\s\S]*العربية/);
     assert.match(homeHtml,/href="\/complaints\/"[^>]*>Complaints &amp; Helpdesk/);
-    assert.equal((await call('/complaints/')).status,200);
+    const cmpHtml=await (await call('/complaints/')).text();
+    assert.match(cmpHtml,/name="photo" type="file"/);
+    assert.match(homeHtml,/name="photo" type="file"/);
+    let erpComplaintBody=null;
     globalThis.fetch=async(url,opts)=>{
-      if(String(url).includes('/complaints'))return new Response(JSON.stringify({id:777}),{status:201,headers:{'Content-Type':'application/json'}});
+      if(String(url).includes('/complaints')){erpComplaintBody=JSON.parse(opts.body);return new Response(JSON.stringify({id:777}),{status:201,headers:{'Content-Type':'application/json'}})}
       return new Response('Not found',{status:404});
     };
-    const cmpRes=await call('/api/portal/complaints',{config:erpCfg,post:{name:'Ali',email:'ali@example.com',phone:'+971500000033',category:'Service Quality',receipt:'SB-123',message:'AC still leaking after visit.'}});
+    const tinyPng=Buffer.from([137,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82]).toString('base64');
+    const cmpRes=await call('/api/portal/complaints',{config:erpCfg,post:{name:'Ali',email:'ali@example.com',phone:'+971500000033',category:'Service Quality',receipt:'SB-123',message:'AC still leaking after visit.',photo:{data:tinyPng,type:'image/png'}}});
     assert.equal(cmpRes.status,201);
     const cmpJson=await cmpRes.json();
     assert.equal(cmpJson.ok,true);
     assert.equal(cmpJson.erpId,777);
+    assert.match(cmpJson.photo,/^\/media\/[a-f0-9]{64}$/);
+    assert.match(erpComplaintBody.photo_url,/\/media\/[a-f0-9]{64}$/);
     assert.match(cmpJson.reference,/^CMP-/);
   }finally{globalThis.fetch=original}
 });

@@ -72,6 +72,7 @@ function quoteForm({ title, label, description = 'Share a few details so we can 
           <label>Country <span aria-hidden="true">*</span><select name="country" autocomplete="country" required>${regionOptions()}</select></label>
           <label>Area <span aria-hidden="true">*</span><input name="area" autocomplete="address-level3" required pattern=".*\\S.*" maxlength="80" placeholder="e.g. Business Bay"></label>
           <label class="field-wide field-details">What needs attention?<textarea name="details" maxlength="450" rows="3" placeholder="Describe the issue or scope of work"></textarea></label>
+          <label class="field-wide">Attach photo (optional)<input name="photo" type="file" accept="image/png,image/jpeg,image/webp"></label>
         </div>
         <div class="quote-submit-actions"><button class="button button-primary form-submit" type="submit">Send quote request</button><button class="button button-outline" type="submit" data-prepare-whatsapp>Prepare WhatsApp message</button></div>
       </fieldset>
@@ -376,6 +377,7 @@ function complaintsPage() {
           </label>
         </div>
         <label>Describe your complaint<textarea name="message" rows="5" required maxlength="3000" placeholder="Share what happened, the date/location, and how we can resolve it."></textarea></label>
+        <label>Attach photo (optional)<input name="photo" type="file" accept="image/png,image/jpeg,image/webp"></label>
         <div style="position:absolute;left:-9999px;opacity:0;height:0;overflow:hidden" aria-hidden="true"><label>Leave empty<input name="_sb_hp" tabindex="-1" autocomplete="off"></label></div>
         <div class="form-actions">
           <button type="submit" class="button button-primary">Submit to Customer Helpdesk</button>

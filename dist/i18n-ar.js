@@ -101,6 +101,7 @@
     ['Billing / Invoice', 'الفواتير / الدفع'],
     ['Other', 'أخرى'],
     ['Describe your complaint', 'اشرح تفاصيل الشكوى'],
+    ['Attach photo (optional)', 'إرفاق صورة (اختياري)'],
     ['Company', 'الشركة'],
     ['Resources & Policies', 'الموارد والسياسات'],
     ['Blog', 'المدونة'],

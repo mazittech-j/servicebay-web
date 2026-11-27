@@ -70,6 +70,18 @@ async function basic(request,env,store,identity){
 }
 const receiptPattern=/^SB-([A-Z0-9]{7,10})-([A-F0-9]{32})$/;
 async function requestKey(code){const match=receiptPattern.exec(code);if(!match)fail('Enter the full receipt code.');return 'request/'+parseInt(match[1],36).toString().padStart(15,'0')+'-'+(await digest(code)).slice(0,40)}
+async function savePortalPhoto(store,photo){
+  if(!photo||typeof photo!=='object')return '';
+  const {data,type}=photo;
+  if(typeof data!=='string'||data.length>700000||!['image/png','image/jpeg','image/webp'].includes(type))fail('Choose a JPEG, PNG or WebP photo under 500 KB.');
+  let b;try{b=bytes(data)}catch{fail('Invalid photo.')}
+  if(b.length>512000||b.length<12)fail('Choose a photo under 500 KB.');
+  const match=type==='image/png'?b[0]===137&&String.fromCharCode(...b.slice(1,4))==='PNG':type==='image/jpeg'?b[0]===255&&b[1]===216&&b[2]===255:String.fromCharCode(...b.slice(0,4))==='RIFF'&&String.fromCharCode(...b.slice(8,12))==='WEBP';
+  if(!match)fail('Photo type does not match the file.');
+  const key='/media/'+await digest(data);
+  if(!(await store.get(key)).version){try{await store.save(key,{data,type},0,event('Quotes','Uploaded customer photo',type))}catch(e){if(e.status!==409)throw e}}
+  return key;
+}
 async function sync(env,store,key) {
   const entry=await store.get(key);if(!entry.data)fail('Request not found.',404);
   if(entry.data.erpId)return entry;
@@ -78,12 +90,13 @@ async function sync(env,store,key) {
   if(!base.canSync)fail('Add the ServiceHub API URL and integration key to enable delivery.',503);
   const r=entry.data,c=createServiceHubClient({baseUrl:creds.apiUrl,apiKey:creds.apiKey});
   const extId=r.external||r.receipt||key.replace(/[^A-Za-z0-9_.:-]/g,'-');
-  const attr=[r.slot?'Slot: '+r.slot:'',r.schedule?'Schedule: '+r.schedule:'',r.source?'Source: '+r.source:'',r.medium?'Medium: '+r.medium:'',r.campaign?'Campaign: '+r.campaign:'',r.device?'Device: '+r.device:''].filter(Boolean).join(' | ');
+  const photoLink=r.photo?((r.origin||'')+r.photo):'';
+  const attr=[r.slot?'Slot: '+r.slot:'',r.schedule?'Schedule: '+r.schedule:'',photoLink?'Photo: '+photoLink:'',r.source?'Source: '+r.source:'',r.medium?'Medium: '+r.medium:'',r.campaign?'Campaign: '+r.campaign:'',r.device?'Device: '+r.device:''].filter(Boolean).join(' | ');
   const baseMsg=r.message||'';
   const fullMsg=attr?(baseMsg?baseMsg+'\n\n['+attr+']':'['+attr+']'):baseMsg;
   let response;
   const corePayload={external_id:extId,name:r.name,email:r.email,phone:r.phone,message:fullMsg};
-  const fullPayload={...corePayload,slot:r.slot||'',preferred_slot:r.slot||'',schedule:r.schedule||'',source:r.source||'Direct',medium:r.medium||'',campaign:r.campaign||'',device:r.device||'',service:r.service||'',area:r.area||'',property:r.property||'',country:r.country||''};
+  const fullPayload={...corePayload,slot:r.slot||'',preferred_slot:r.slot||'',schedule:r.schedule||'',photo_url:photoLink,source:r.source||'Direct',medium:r.medium||'',campaign:r.campaign||'',device:r.device||'',service:r.service||'',area:r.area||'',property:r.property||'',country:r.country||''};
   try{
     try{response=await c.submit('enquiries',extId,fullPayload)}catch(e){
       if(e?.status===400||e?.status===422)response=await c.submit('enquiries',extId,corePayload);
@@ -564,7 +577,7 @@ export async function serve(request,env,store,platform){
     if(path.startsWith('/api/portal/')&&method==='POST'){
       const blockedMins=await isIpBlocked(store,platform.ip);
       if(blockedMins>0)return json({error:'Security shield active. Try again in '+blockedMins+' minute'+(blockedMins===1?'':'s')+'.'},429);
-      const x=await body(request,12000);
+      const x=await body(request,(path==='/api/portal/requests'||path==='/api/portal/complaints')?750000:12000);
       if(detectHoneypot(x)){
         await recordIncident({db:store,env,ip:platform.ip,reason:'Bot spam blocked on quote/portal form',target:path,detail:'Honeypot field triggered',immediateBlock:true});
         return json({error:'Request blocked by security shield.'},403);
@@ -573,20 +586,22 @@ export async function serve(request,env,store,platform){
         const name=txt(x.name,80),email=txt(x.email||'',150),phone=txt(x.phone||'',32),category=txt(x.category||'Other',60)||'Other',receipt=txt(x.receipt||'',80),message=txt(x.message,3000);
         if(!name||!message||!email||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||!phone||!/^[+\d(). -]{7,32}$/.test(phone))fail('Check your name, email, mobile number, and complaint details.');
         await store.limit('rate/complaint/'+await digest(platform.ip||'shared'),15,10);
+        const photo=await savePortalPhoto(store,x.photo);
+        const photoUrl=photo?((platform.requestOrigin||u.origin)+photo):'';
         const now=new Date().toISOString(),ref='CMP-'+Date.now().toString(36).toUpperCase()+'-'+crypto.randomUUID().slice(0,6).toUpperCase();
         const cKey='complaint/'+now+'/'+crypto.randomUUID();
-        const fullMsg='[CUSTOMER COMPLAINT / HELPDESK]\nReference: '+ref+'\nCategory: '+category+(receipt?'\nJob/Receipt: '+receipt:'')+'\n\n'+message;
+        const fullMsg='[CUSTOMER COMPLAINT / HELPDESK]\nReference: '+ref+'\nCategory: '+category+(receipt?'\nJob/Receipt: '+receipt:'')+(photoUrl?'\nPhoto: '+photoUrl:'')+'\n\n'+message;
         let erpId=null,erpError='';
         const creds=await erpCredentials(store,env),base=parseErpUrl(creds.apiUrl,creds.apiKey);
         if(!creds.paused&&base.canSync){
           try{
-            const res=await createServiceHubClient({baseUrl:creds.apiUrl,apiKey:creds.apiKey}).submitComplaint(ref,{external_id:ref,name,email,phone,category,receipt_ref:receipt,subject:'Customer Complaint: '+category,message:fullMsg,kind:'complaint'});
+            const res=await createServiceHubClient({baseUrl:creds.apiUrl,apiKey:creds.apiKey}).submitComplaint(ref,{external_id:ref,name,email,phone,category,receipt_ref:receipt,photo_url:photoUrl,subject:'Customer Complaint: '+category,message:fullMsg,kind:'complaint'});
             const idNum=Number(res?.id??res?.ticket?.id??res?.complaint?.id??res?.enquiry?.id);
             if(Number.isSafeInteger(idNum)&&idNum>0)erpId=idNum;
           }catch(err){erpError=String(err?.message||'Helpdesk sync pending').slice(0,200)}
         }
-        await store.save(cKey,{reference:ref,name,email,phone,category,receipt,message,created:now,erpId,...(erpError?{erpError}:{})},0,event('Quotes','Received customer complaint',category+' · '+ref,'Customer helpdesk'));
-        return json({ok:true,reference:ref,erpId},201);
+        await store.save(cKey,{reference:ref,name,email,phone,category,receipt,message,photo,created:now,erpId,...(erpError?{erpError}:{})},0,event('Quotes','Received customer complaint',category+' · '+ref,'Customer helpdesk'));
+        return json({ok:true,reference:ref,erpId,photo},201);
       }
       const code=txt(x.code,70).toUpperCase(),primary=await requestKey(code);
       const key=path==='/api/portal/requests'?primary:((await store.get('receipt/'+await hash(code))).data?.key||primary);
@@ -609,11 +624,12 @@ export async function serve(request,env,store,platform){
         let old=await store.get(key);
         if(!old.data&&Math.abs(Date.now()-Number(key.slice(8,23)))>86400000)fail('Refresh the form for a new receipt.');
         await store.limit('rate/submit/'+await digest(platform.ip||'shared'),30,10);
+        const photo=await savePortalPhoto(store,x.photo);
         const account=await quoteCustomer(request,store,env,platform,{name,email,password:x.password}),user=account.data.user;
         const service=txt(x.service||'Service quote',90),area=txt(x.area||'',80),created=new Date().toISOString();
         let inserted=false;
         if(!old.data){
-          const record={name,email:user.email,phone,message,service,area,property:txt(x.property||'',80),country:txt(x.country||'',80),details:txt(x.details||'',650),slot:txt(x.slot||'',120),schedule:txt(x.schedule||'',80),source:txt(x.source||'Direct',40)||'Direct',medium:txt(x.medium||'',40),campaign:txt(x.campaign||'',60),device:txt(x.device||'',20),landingPage:txt(x.landingPage||'',120),customerId:user.id,receipt:code,created,status:'Received',history:[{status:'Received',at:created}],serviceId:txt(x.serviceId||'',100),planId:txt(x.planId||'',100),plan:txt(x.plan||'',90),external:'sb-'+key.slice(-40),erpId:null};
+          const record={name,email:user.email,phone,message,service,area,property:txt(x.property||'',80),country:txt(x.country||'',80),details:txt(x.details||'',650),slot:txt(x.slot||'',120),schedule:txt(x.schedule||'',80),...(photo?{photo,origin:platform.requestOrigin||u.origin}:{}),source:txt(x.source||'Direct',40)||'Direct',medium:txt(x.medium||'',40),campaign:txt(x.campaign||'',60),device:txt(x.device||'',20),landingPage:txt(x.landingPage||'',120),customerId:user.id,receipt:code,created,status:'Received',history:[{status:'Received',at:created}],serviceId:txt(x.serviceId||'',100),planId:txt(x.planId||'',100),plan:txt(x.plan||'',90),external:'sb-'+key.slice(-40),erpId:null};
           try{await store.save(key,record,0,event('Quotes','Received quote',service+' · '+(record.source||'Direct'),'Customer portal'));inserted=true}catch(e){if(e.status!==409)throw e;old=await store.get(key)}
         }
         if(!inserted&&(old.data?.customerId||'')!==(user.id||''))fail('Use the original account or start a new quote.',409);

@@ -559,6 +559,7 @@
       const erpText=row.erpId?('Delivered (#'+row.erpId+')'):(row.erpError?('Sync failed: '+row.erpError):'Stored on website');
       const srcText=[row.source||'Direct',row.medium,row.campaign,row.device].filter(Boolean).join(' · ');
       facts(detail,[['Email',row.email],['Phone',row.phone],['Source',srcText],['Preferred slot',row.slot],['Schedule',row.schedule],['Area',row.area],['Property',row.property],['Country',row.country],['Received',new Date(row.created).toLocaleString()],['Receipt email',row.emailState],['ServiceHub',erpText]]);
+      if(row.photo){const pWrap=el('div');const pLink=el('a','View uploaded photo');pLink.href=row.photo;pLink.target='_blank';pLink.rel='noopener';const img=document.createElement('img');img.src=row.photo;img.alt='Customer uploaded photo';img.style.cssText='display:block;max-width:260px;max-height:180px;border-radius:8px;margin:.45rem 0';pWrap.append(pLink,img);detail.append(pWrap)}
       if(row.details||row.message){const text=el('details'),s=el('summary','Request description');text.append(s,el('p',row.details||row.message,'preserve-lines'));text.open=true;detail.append(text)}
       const state=field(detail,'Request status',row.status,'text',stages);state.oninput=e=>e.stopPropagation();
       const actions=[button('Update status',async()=>{const res=await api('request',{key:row.key,previous:row.status,status:state.value});await refresh();notice.textContent='Request status updated.'+(res.emailStatus?' (Email: '+res.emailStatus+')':'')},'primary')];
