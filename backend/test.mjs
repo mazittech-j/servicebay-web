@@ -458,7 +458,7 @@ test('Traffic source & device attribution tracks visits, compares platforms in a
 
     // Top bar has English/Arabic switcher, footer links to /complaints/, and complaints submit to ERP Helpdesk
     const homeHtml=await (await call('/')).text();
-    assert.match(homeHtml,/class="lang-switch"[\s\S]*English[\s\S]*\/ar\/[\s\S]*العربية/);
+    assert.match(homeHtml,/data-lang-select[\s\S]*English[\s\S]*العربية/);
     assert.match(homeHtml,/href="\/complaints\/"[^>]*>Complaints &amp; Helpdesk/);
     assert.equal((await call('/complaints/')).status,200);
     globalThis.fetch=async(url,opts)=>{

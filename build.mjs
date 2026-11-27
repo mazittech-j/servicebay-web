@@ -402,8 +402,8 @@ function analyticsChoices(ar=false) {
 
 function arabicLayout(info,title,description,body) {
   return `<!doctype html><html lang="ar-AE" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${headTags(info,title,description)}
-    <link rel="stylesheet" href="/styles.css"><link rel="stylesheet" href="/sections.css"></head><body>
-    <a class="skip-link" href="#main">انتقل إلى المحتوى</a><header class="ar-head"><div class="wrap"><a href="/ar/" aria-label="ServiceBay"><img src="${business.logo}" alt="ServiceBay" width="185" height="36"></a><a href="/" lang="en" hreflang="en-AE">English</a></div></header>
+    <link rel="stylesheet" href="/styles.css"><link rel="stylesheet" href="/sections.css"><script src="/i18n-ar.js" defer></script></head><body>
+    <a class="skip-link" href="#main">انتقل إلى المحتوى</a><header class="ar-head"><div class="wrap"><a href="/ar/" aria-label="ServiceBay"><img src="${business.logo}" alt="ServiceBay" width="185" height="36"></a><a href="/?lang=en" lang="en" hreflang="en-AE">English</a></div></header>
     ${body}<footer class="ar-footer"><div class="wrap"><strong>ServiceBay</strong><span>دبي، الإمارات العربية المتحدة</span><a dir="ltr" href="${phone}">${business.phoneInternationalLabel}</a><a href="${email}">${business.email}</a></div></footer>${analyticsChoices(true)}${floatingContact(true)}</body></html>`;
 }
 
@@ -423,7 +423,8 @@ function layout({ path, title, description, body }) {
   <link rel="stylesheet" href="/styles.css">
   <link rel="stylesheet" href="/sections.css">
   <script src="/region-data.js" defer></script>
-  <script src="/site.js?v=studio-insights-1" defer></script>${path === '/' || path === '/estimate/' || path.startsWith('/services/') ? '\n  <script src="/home-tools.js" defer></script>' : ''}
+  <script src="/site.js?v=studio-insights-1" defer></script>
+  <script src="/i18n-ar.js" defer></script>${path === '/' || path === '/estimate/' || path.startsWith('/services/') ? '\n  <script src="/home-tools.js" defer></script>' : ''}
 
 </head>
 <body${info.trade ? ' class="trade-page"' : ''}>
@@ -439,7 +440,7 @@ function layout({ path, title, description, body }) {
             <details class="country-menu" hidden><summary aria-label="Choose country and currency"><img data-region-flag src="/assets/flags/ae.svg" alt="" width="22" height="16"><span data-region-name>UAE · AED</span></summary>
             <div class="country-list">${Object.entries(regions).map(([code, region]) => `<button type="button" data-country="${code}" aria-pressed="false"><img src="/assets/flags/${code.toLowerCase()}.svg" alt="" width="22" height="16"><span>${region.short}</span><small>${region.currency}</small></button>`).join('')}</div></details>
           </div>
-          <div class="lang-switch" role="group" aria-label="Language"><a href="/" aria-current="page">English</a><span aria-hidden="true">/</span><a href="/ar/" lang="ar" hreflang="ar-AE">العربية</a></div>
+          <div class="lang-control"><select class="utility-lang" data-lang-select aria-label="Language"><option value="en">English</option><option value="ar">العربية</option></select></div>
           <a href="${email}" class="utility-email">${icon('email')}${business.email}</a>
           <a href="${phone}">${icon('phone')}${business.phoneLabel}</a>
         </div></div>

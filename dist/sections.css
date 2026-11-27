@@ -1544,3 +1544,7 @@ body:has(dialog[open]) .quick-contact,body:has(#navigation[data-collapsed="false
 .lang-switch{display:inline-flex;align-items:center;gap:.35rem;font-size:.86rem;font-weight:600;padding:.2rem .55rem;border:1px solid var(--line,rgba(255,255,255,.22));border-radius:999px}
 .lang-switch a{text-decoration:none;color:inherit;opacity:.85}
 .lang-switch a[aria-current="page"],.lang-switch a:hover{opacity:1;text-decoration:underline}
+
+.lang-control{display:inline-flex;align-items:center}
+.utility-lang{appearance:auto;background:transparent;color:inherit;border:1px solid var(--line,rgba(255,255,255,.22));border-radius:999px;padding:.2rem .55rem;font:600 .84rem/1.2 inherit;cursor:pointer}
+.utility-lang option{color:#191917;background:#fff}
