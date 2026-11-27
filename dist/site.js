@@ -528,7 +528,8 @@ for (const cForm of document.querySelectorAll('form[data-complaint-form]')) {
       let d = {}; try { d = await res.json(); } catch {}
       if (!res.ok) throw Error(d.error || 'Could not submit complaint.');
       cForm.reset();
-      out.textContent = 'Complaint logged with Customer Helpdesk. Reference: ' + d.reference + (d.erpId ? ' (Helpdesk #' + d.erpId + ')' : '') + '.';
+      const link = document.createElement('a'); link.href = '/portal/'; link.textContent = 'Track in customer portal';
+      out.replaceChildren('Complaint logged with Customer Helpdesk. Reference: ' + d.reference + (d.erpId ? ' (Helpdesk #' + d.erpId + ')' : '') + (d.emailStatus === 'Accepted' ? ' — confirmation emailed. ' : ' — save this code to track status: '), link);
     } catch (err) {
       out.textContent = err.message || 'Could not submit complaint. Try again.';
     } finally {

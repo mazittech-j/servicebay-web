@@ -477,6 +477,14 @@ test('Traffic source & device attribution tracks visits, compares platforms in a
     assert.match(cmpJson.photo,/^\/media\/[a-f0-9]{64}$/);
     assert.match(erpComplaintBody.photo_url,/\/media\/[a-f0-9]{64}$/);
     assert.match(cmpJson.reference,/^CMP-/);
+
+    // Complaint appears in Admin inbox and is trackable via Customer Portal
+    const admInbox=await (await call('/api/admin/inbox',{admin:true,config:erpCfg})).json();
+    assert.ok(admInbox.items.some(i=>i.receipt===cmpJson.reference&&i.kind==='complaint'));
+    const trk=await call('/api/portal/track',{config:erpCfg,post:{code:cmpJson.reference}});
+    assert.equal(trk.status,200);
+    const trkJson=await trk.json();
+    assert.equal(trkJson.status,'Received');
   }finally{globalThis.fetch=original}
 });
 

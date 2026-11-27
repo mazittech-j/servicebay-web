@@ -98,15 +98,20 @@ async function sync(env,store,key) {
   const corePayload={external_id:extId,name:r.name,email:r.email,phone:r.phone,message:fullMsg};
   const fullPayload={...corePayload,slot:r.slot||'',preferred_slot:r.slot||'',schedule:r.schedule||'',photo_url:photoLink,source:r.source||'Direct',medium:r.medium||'',campaign:r.campaign||'',device:r.device||'',service:r.service||'',area:r.area||'',property:r.property||'',country:r.country||''};
   try{
-    try{response=await c.submit('enquiries',extId,fullPayload)}catch(e){
-      if(e?.status===400||e?.status===422)response=await c.submit('enquiries',extId,corePayload);
-      else throw e;
+    if(r.kind==='complaint'){
+      const cmpMsg='[CUSTOMER COMPLAINT / HELPDESK]\nReference: '+extId+'\nCategory: '+(r.category||'Other')+(r.jobRef?'\nJob/Receipt: '+r.jobRef:'')+(photoLink?'\nPhoto: '+photoLink:'')+'\n\n'+baseMsg;
+      response=await c.submitComplaint(extId,{external_id:extId,name:r.name,email:r.email,phone:r.phone,category:r.category||'Other',receipt_ref:r.jobRef||'',photo_url:photoLink,subject:'Customer Complaint: '+(r.category||'Other'),message:cmpMsg,kind:'complaint'});
+    }else{
+      try{response=await c.submit('enquiries',extId,fullPayload)}catch(e){
+        if(e?.status===400||e?.status===422)response=await c.submit('enquiries',extId,corePayload);
+        else throw e;
+      }
     }
   }catch(err){
     if(err?.status===401||err?.status===403){try{const row=await store.get('security/erp');const msg=err?.message?String(err.message).slice(0,120):'';const st=(err.status===403&&msg)?('Blocked (403): '+msg):('Revoked / Unauthorized ('+err.status+')'+(msg?': '+msg:''));await store.save('security/erp',{...row.data,lastCheck:{status:st,at:new Date().toISOString()}},row.version)}catch{}}
     fail(err?.message||'ServiceHub did not confirm delivery. The request is saved and can be retried.',502);
   }
-  const erpId=Number(response?.id??response?.enquiry?.id??response?.service_request?.id??response?.lead?.id);
+  const erpId=Number(response?.id??response?.ticket?.id??response?.complaint?.id??response?.enquiry?.id??response?.service_request?.id??response?.lead?.id);
   if(!Number.isSafeInteger(erpId)||erpId<1)fail('ServiceHub returned an unrecognised receipt. Retry using the same request.',502);
   // Another administrator can change status while the external call is in progress.
   for(let n=0;n<3;n++){const next=await store.get(key);if(next.data.erpId)return next;try{const upd={...next.data,erpId,erpSyncedStatus:next.data.status||'New'};delete upd.erpError;await store.save(key,upd,next.version,event('Quotes','Sent quote to ServiceHub',r.service||'Service quote'));return await store.get(key)}catch(e){if(e.status!==409)throw e}}
@@ -587,9 +592,10 @@ export async function serve(request,env,store,platform){
         if(!name||!message||!email||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||!phone||!/^[+\d(). -]{7,32}$/.test(phone))fail('Check your name, email, mobile number, and complaint details.');
         await store.limit('rate/complaint/'+await digest(platform.ip||'shared'),15,10);
         const photo=await savePortalPhoto(store,x.photo);
-        const photoUrl=photo?((platform.requestOrigin||u.origin)+photo):'';
-        const now=new Date().toISOString(),ref='CMP-'+Date.now().toString(36).toUpperCase()+'-'+crypto.randomUUID().slice(0,6).toUpperCase();
-        const cKey='complaint/'+now+'/'+crypto.randomUUID();
+        const originUrl=platform.requestOrigin||u.origin;
+        const photoUrl=photo?(originUrl+photo):'';
+        const nowMs=Date.now(),now=new Date(nowMs).toISOString(),ref='CMP-'+nowMs.toString(36).toUpperCase()+'-'+crypto.randomUUID().slice(0,6).toUpperCase();
+        const cKey='request/'+String(nowMs).padStart(15,'0')+'-'+(await digest(ref)).slice(0,40);
         const fullMsg='[CUSTOMER COMPLAINT / HELPDESK]\nReference: '+ref+'\nCategory: '+category+(receipt?'\nJob/Receipt: '+receipt:'')+(photoUrl?'\nPhoto: '+photoUrl:'')+'\n\n'+message;
         let erpId=null,erpError='';
         const creds=await erpCredentials(store,env),base=parseErpUrl(creds.apiUrl,creds.apiKey);
@@ -600,11 +606,23 @@ export async function serve(request,env,store,platform){
             if(Number.isSafeInteger(idNum)&&idNum>0)erpId=idNum;
           }catch(err){erpError=String(err?.message||'Helpdesk sync pending').slice(0,200)}
         }
-        await store.save(cKey,{reference:ref,name,email,phone,category,receipt,message,photo,created:now,erpId,...(erpError?{erpError}:{})},0,event('Quotes','Received customer complaint',category+' · '+ref,'Customer helpdesk'));
-        return json({ok:true,reference:ref,erpId,photo},201);
+        const record={kind:'complaint',name,email,phone,message,service:'Complaint: '+category,category,jobRef:receipt,details:fullMsg,...(photo?{photo,origin:originUrl}:{}),source:'Helpdesk',receipt:ref,external:ref,created:now,status:'Received',history:[{status:'Received',at:now}],erpId,...(erpId?{erpSyncedStatus:'Received'}:{}),...(erpError?{erpError}:{})};
+        await store.save(cKey,record,0,event('Quotes','Received customer complaint',category+' · '+ref,'Customer helpdesk'));
+        try{await store.save('receipt/'+await hash(ref),{key:cKey},0)}catch{}
+        let emailStatus='Not sent';
+        try{
+          emailStatus=await sendSystemEmail(store,env,{
+            to:email,
+            subject:'ServiceBay complaint received: '+ref,
+            text:`Hello ${name},\n\nWe have logged your complaint with our Customer Helpdesk.\n\nComplaint reference: ${ref}\nCategory: ${category}${receipt?'\nJob/Receipt ref: '+receipt:''}\n\nTrack your complaint status anytime:\n${originUrl}/portal/\n\nServiceBay Technical Services`,
+            idempotencyKey:'sb-cmp-'+ref
+          });
+        }catch{emailStatus='Unconfirmed'}
+        return json({ok:true,reference:ref,erpId,photo,emailStatus},201);
       }
-      const code=txt(x.code,70).toUpperCase(),primary=await requestKey(code);
-      const key=path==='/api/portal/requests'?primary:((await store.get('receipt/'+await hash(code))).data?.key||primary);
+      const code=txt(x.code,70).toUpperCase();
+      const mappedKey=path==='/api/portal/requests'?null:(await store.get('receipt/'+await hash(code))).data?.key;
+      const key=mappedKey||await requestKey(code);
       if(path==='/api/portal/claim'){
         const user=await session(request,store,'customer',platform,env);if(!user)fail('Sign in to add this receipt.',401);
         const old=await store.get(key);if(!old.data)fail('No matching receipt.',404);
