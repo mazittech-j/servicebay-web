@@ -53,6 +53,7 @@
       return;
     }
     if(tab==='rates'){
+      if(cfg.integrations?.canSync&&cfg.integrations?.autoSync!==false){try{const pr=await api('erp',{action:'pull-pricing'});if(ticket!==epoch)return;if(pr?.updatedCount>0){const fresh=await api('content?scope=site');if(ticket!==epoch)return;version=fresh.version;published=fresh.published;data=fresh.draft}}catch{}}
       catalogTabs();const c=card(panel,'Estimator and plan pricing');c.append(el('p','Publish a service to offer it in the cost estimator and quote form. AMC plans also appear on the plan comparison page.'));
       data.pricing=data.pricing||structuredClone(cfg.defaults.pricing);
       const bar=el('div',undefined,'buttons');c.append(bar);

@@ -135,8 +135,7 @@ async function pullErpPricing(env,store,client,{quiet=false,preloadedList=null}=
     if(!item||typeof item!=='object')continue;
     const name=String(item.name||item.title||item.service_name||item.plan_name||item.label||item.display_name||item.service||'').trim().slice(0,80);
     const rawRate=item.rate??item.price??item.unit_price??item.unitPrice??item.base_price??item.basePrice??item.base_rate??item.default_rate??item.unit_cost??item.price_per_unit??item.annual_price??item.annualPrice??item.annual_rate??item.yearly_price??item.monthly_price??item.hourly_rate??item.visit_fee??item.price_aed??item.rate_aed??item.amount??item.fee??item.cost??0;
-    const rate=typeof rawRate==='number'?rawRate:Number(String(rawRate).replace(/[^0-9.]/g,''));
-    if(!Number.isFinite(rate)||rate<=0)continue;
+    const parsedRate=typeof rawRate==='number'?rawRate:Number(String(rawRate).replace(/[^0-9.]/g,''));
     const rawKind=String(item.kind||item.type||item.category||'').toLowerCase();
     const isPlan=rawKind==='plan'||rawKind==='amc'||rawKind==='amc_plan'||rawKind==='subscription';
     const slug=item.slug?String(item.slug):'';
@@ -146,6 +145,7 @@ async function pullErpPricing(env,store,client,{quiet=false,preloadedList=null}=
       const norm=name.toLowerCase();
       matchKey=Object.keys(draft.pricing).find(k=>(draft.pricing[k]?.name||'').trim().toLowerCase()===norm)||'';
     }
+    const rate=(Number.isFinite(parsedRate)&&parsedRate>0)?parsedRate:(matchKey?Number(draft.pricing[matchKey]?.rate||100):100);
     const isActive=!(item.active===false||item.is_active===false||/^(inactive|disabled|archived)$/i.test(String(item.status||'')));
     if(matchKey){
       const prevRate=Number(draft.pricing[matchKey]?.rate),prevName=draft.pricing[matchKey]?.name,prevActive=draft.pricing[matchKey]?.active!==false;
@@ -374,6 +374,7 @@ export async function serve(request,env,store,platform){
             checkStatus=(res.ok||res.status===404||res.status===400)?'Connected':await readErr(res);
           }catch{checkStatus='Connection timeout'}
           await store.save('security/erp',{...cur,apiUrl,iv,secret,paused:false,deleted:false,lastCheck:{status:checkStatus,at:new Date().toISOString()}},row.version,event('Website','Saved ServiceHub ERP connection',apiUrl+' · '+checkStatus));
+          if(checkStatus==='Connected'&&cur.autoSync!==false){try{const c=await erpCredentials(store,env);await pullErpPricing(env,store,createServiceHubClient({baseUrl:c.apiUrl,apiKey:c.apiKey}),{quiet:false})}catch{}}
           return json(await erpState(store,env));
         }
         if(input.action==='delete'){
@@ -386,6 +387,7 @@ export async function serve(request,env,store,platform){
         }
         if(input.action==='reconnect'){
           await store.save('security/erp',{...cur,paused:false},row.version,event('Website','Re-enabled ServiceHub ERP sync'));
+          if(cur.autoSync!==false){try{const c=await erpCredentials(store,env);if(parseErpUrl(c.apiUrl,c.apiKey).canSync)await pullErpPricing(env,store,createServiceHubClient({baseUrl:c.apiUrl,apiKey:c.apiKey}),{quiet:false})}catch{}}
           return json(await erpState(store,env));
         }
         if(input.action==='test'){
