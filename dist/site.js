@@ -477,3 +477,30 @@ for (const workflow of document.querySelectorAll('[data-workflow]')) {
   showStep(0);
   navigation.hidden = false;
 }
+
+for (const cForm of document.querySelectorAll('form[data-complaint-form]')) {
+  const out = cForm.querySelector('.form-status');
+  const fs = cForm.querySelector('fieldset');
+  cForm.addEventListener('submit', async e => {
+    e.preventDefault();
+    const fd = new FormData(cForm);
+    const val = k => String(fd.get(k) || '').trim();
+    fs.disabled = true;
+    out.textContent = 'Submitting to Customer Helpdesk…';
+    try {
+      const res = await fetch('/api/portal/complaints', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: val('name'), email: val('email'), phone: val('phone'), receipt: val('receipt'), category: val('category'), message: val('message'), _sb_hp: val('_sb_hp') })
+      });
+      let d = {}; try { d = await res.json(); } catch {}
+      if (!res.ok) throw Error(d.error || 'Could not submit complaint.');
+      cForm.reset();
+      out.textContent = 'Complaint logged with Customer Helpdesk. Reference: ' + d.reference + (d.erpId ? ' (Helpdesk #' + d.erpId + ')' : '') + '.';
+    } catch (err) {
+      out.textContent = err.message || 'Could not submit complaint. Try again.';
+    } finally {
+      fs.disabled = false;
+    }
+  });
+}

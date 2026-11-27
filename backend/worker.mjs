@@ -569,6 +569,25 @@ export async function serve(request,env,store,platform){
         await recordIncident({db:store,env,ip:platform.ip,reason:'Bot spam blocked on quote/portal form',target:path,detail:'Honeypot field triggered',immediateBlock:true});
         return json({error:'Request blocked by security shield.'},403);
       }
+      if(path==='/api/portal/complaints'){
+        const name=txt(x.name,80),email=txt(x.email||'',150),phone=txt(x.phone||'',32),category=txt(x.category||'Other',60)||'Other',receipt=txt(x.receipt||'',80),message=txt(x.message,3000);
+        if(!name||!message||!email||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)||!phone||!/^[+\d(). -]{7,32}$/.test(phone))fail('Check your name, email, mobile number, and complaint details.');
+        await store.limit('rate/complaint/'+await digest(platform.ip||'shared'),15,10);
+        const now=new Date().toISOString(),ref='CMP-'+Date.now().toString(36).toUpperCase()+'-'+crypto.randomUUID().slice(0,6).toUpperCase();
+        const cKey='complaint/'+now+'/'+crypto.randomUUID();
+        const fullMsg='[CUSTOMER COMPLAINT / HELPDESK]\nReference: '+ref+'\nCategory: '+category+(receipt?'\nJob/Receipt: '+receipt:'')+'\n\n'+message;
+        let erpId=null,erpError='';
+        const creds=await erpCredentials(store,env),base=parseErpUrl(creds.apiUrl,creds.apiKey);
+        if(!creds.paused&&base.canSync){
+          try{
+            const res=await createServiceHubClient({baseUrl:creds.apiUrl,apiKey:creds.apiKey}).submitComplaint(ref,{external_id:ref,name,email,phone,category,receipt_ref:receipt,subject:'Customer Complaint: '+category,message:fullMsg,kind:'complaint'});
+            const idNum=Number(res?.id??res?.ticket?.id??res?.complaint?.id??res?.enquiry?.id);
+            if(Number.isSafeInteger(idNum)&&idNum>0)erpId=idNum;
+          }catch(err){erpError=String(err?.message||'Helpdesk sync pending').slice(0,200)}
+        }
+        await store.save(cKey,{reference:ref,name,email,phone,category,receipt,message,created:now,erpId,...(erpError?{erpError}:{})},0,event('Quotes','Received customer complaint',category+' · '+ref,'Customer helpdesk'));
+        return json({ok:true,reference:ref,erpId},201);
+      }
       const code=txt(x.code,70).toUpperCase(),primary=await requestKey(code);
       const key=path==='/api/portal/requests'?primary:((await store.get('receipt/'+await hash(code))).data?.key||primary);
       if(path==='/api/portal/claim'){

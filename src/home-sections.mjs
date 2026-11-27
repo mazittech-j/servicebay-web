@@ -280,7 +280,7 @@ export function footer() {
       <section>
         <h3>Resources &amp; Policies</h3>
         <ul class="footer-links">
-          <li><a href="/ar/" lang="ar" hreflang="ar-AE">العربية</a></li>
+          <li><a href="/complaints/">Complaints &amp; Helpdesk</a></li>
           <li><a href="/blog/">Blog</a></li>
           <li><a href="/portal/">Customer portal</a></li>
           <li><a href="/privacy-policy/">Privacy Policy</a></li>

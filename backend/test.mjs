@@ -25,7 +25,7 @@ test('Private admin, static pages and service photos',async()=>{
   const login=await call('/api/studio-auth/login',{admin:true,post:{password}});ownerCookie=cookieOf(login);assert.ok(ownerCookie);
   assert.equal((await call('/admin/',{admin:true})).status,200);
   assert.equal((await call('/api/admin/state')).status,401);
-  const {routes}=await (await call('/api/admin/state',{admin:true})).json();assert.equal(routes.length,42);
+  const {routes}=await (await call('/api/admin/state',{admin:true})).json();assert.equal(routes.length,43);
   for(const route of routes){const r=await call(route);assert.equal(r.status,200,route);assert.match(await r.text(),/<h1\b/)}
   assert.match(await (await call('/amc/')).text(),/Premium Care/);
   assert.equal((await call('/assets/servicebay-wordmark.webp')).headers.get('content-type'),'image/webp');
@@ -455,6 +455,22 @@ test('Traffic source & device attribution tracks visits, compares platforms in a
     assert.ok(slotKey);
     await (await call('/api/admin/erp',{admin:true,config:erpCfg,post:{action:'sync-all'}})).json();
     assert.match(sentBody.message,/Slot: Morning \(8:00 AM – 12:00 PM\)/);
+
+    // Top bar has English/Arabic switcher, footer links to /complaints/, and complaints submit to ERP Helpdesk
+    const homeHtml=await (await call('/')).text();
+    assert.match(homeHtml,/class="lang-switch"[\s\S]*English[\s\S]*\/ar\/[\s\S]*العربية/);
+    assert.match(homeHtml,/href="\/complaints\/"[^>]*>Complaints &amp; Helpdesk/);
+    assert.equal((await call('/complaints/')).status,200);
+    globalThis.fetch=async(url,opts)=>{
+      if(String(url).includes('/complaints'))return new Response(JSON.stringify({id:777}),{status:201,headers:{'Content-Type':'application/json'}});
+      return new Response('Not found',{status:404});
+    };
+    const cmpRes=await call('/api/portal/complaints',{config:erpCfg,post:{name:'Ali',email:'ali@example.com',phone:'+971500000033',category:'Service Quality',receipt:'SB-123',message:'AC still leaking after visit.'}});
+    assert.equal(cmpRes.status,201);
+    const cmpJson=await cmpRes.json();
+    assert.equal(cmpJson.ok,true);
+    assert.equal(cmpJson.erpId,777);
+    assert.match(cmpJson.reference,/^CMP-/);
   }finally{globalThis.fetch=original}
 });
 

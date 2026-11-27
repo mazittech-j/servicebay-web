@@ -354,6 +354,38 @@ function policyPage({ title, intro, sections }) {
   </article>`;
 }
 
+function complaintsPage() {
+  return `<article class="section wrap page-intro">
+    ${heading('CUSTOMER HELPDESK', 'Complaints & Service Helpdesk', 'Report an issue with a visit, technician, billing, or schedule. Your complaint is logged directly with our Customer Helpdesk team in ServiceHub ERP.')}
+    <form class="quote-form" data-complaint-form>
+      <fieldset>
+        <legend>Submit a complaint</legend>
+        <div class="field-grid">
+          <label>Full name<input name="name" required maxlength="80" autocomplete="name"></label>
+          <label>Email address<input name="email" type="email" required maxlength="150" autocomplete="email"></label>
+          <label>Mobile number<input name="phone" type="tel" required maxlength="32" autocomplete="tel" placeholder="+971 50 000 0000"></label>
+          <label>Receipt or job reference (optional)<input name="receipt" maxlength="80" placeholder="e.g. SB-…"></label>
+          <label>Complaint category
+            <select name="category">
+              <option value="Service Quality">Service Quality</option>
+              <option value="Technician Conduct">Technician Conduct</option>
+              <option value="Delay / Scheduling">Delay / Scheduling</option>
+              <option value="Billing / Invoice">Billing / Invoice</option>
+              <option value="Other">Other</option>
+            </select>
+          </label>
+        </div>
+        <label>Describe your complaint<textarea name="message" rows="5" required maxlength="3000" placeholder="Share what happened, the date/location, and how we can resolve it."></textarea></label>
+        <div style="position:absolute;left:-9999px;opacity:0;height:0;overflow:hidden" aria-hidden="true"><label>Leave empty<input name="_sb_hp" tabindex="-1" autocomplete="off"></label></div>
+        <div class="form-actions">
+          <button type="submit" class="button button-primary">Submit to Customer Helpdesk</button>
+          <p class="form-status" role="status" aria-live="polite"></p>
+        </div>
+      </fieldset>
+    </form>
+  </article>`;
+}
+
 function announcementBar() {
   return `<div class="utility-announcements" data-announcements>
     <div class="announcement-messages">${announcements.map(({ label, text }, index) => `<p data-announcement${index ? ' hidden' : ''}><span class="announcement-badge">${escapeHtml(label)}</span><span>${escapeHtml(text)}</span></p>`).join('')}</div>
@@ -407,6 +439,7 @@ function layout({ path, title, description, body }) {
             <details class="country-menu" hidden><summary aria-label="Choose country and currency"><img data-region-flag src="/assets/flags/ae.svg" alt="" width="22" height="16"><span data-region-name>UAE · AED</span></summary>
             <div class="country-list">${Object.entries(regions).map(([code, region]) => `<button type="button" data-country="${code}" aria-pressed="false"><img src="/assets/flags/${code.toLowerCase()}.svg" alt="" width="22" height="16"><span>${region.short}</span><small>${region.currency}</small></button>`).join('')}</div></details>
           </div>
+          <div class="lang-switch" role="group" aria-label="Language"><a href="/" aria-current="page">English</a><span aria-hidden="true">/</span><a href="/ar/" lang="ar" hreflang="ar-AE">العربية</a></div>
           <a href="${email}" class="utility-email">${icon('email')}${business.email}</a>
           <a href="${phone}">${icon('phone')}${business.phoneLabel}</a>
         </div></div>
@@ -449,6 +482,7 @@ const routes = [
   ...(hasReviewProfile ? [['/reviews/', 'Customer feedback', 'Customer feedback and service visit enquiries for ServiceBay.', reviewSection(true) + contactStrip()]] : []),
   ['/careers/', 'Careers', 'Send a technical services careers enquiry to ServiceBay Dubai.', careers()],
   ['/contact/', 'Contact and quotes', 'Contact ServiceBay or prepare a WhatsApp request for property maintenance in Dubai.', contact()],
+  ['/complaints/', 'Complaints & Customer Helpdesk', 'Submit a service complaint directly to the ServiceBay Customer Helpdesk.', complaintsPage()],
   ...policies.map(policy => [policy.path, policy.title, policy.intro, policyPage(policy)]),
   ['/estimate/', 'Cost estimator', 'Estimate repair, annual maintenance, and renovation costs across six GCC currencies using example rates.', `<h1 class="visually-hidden">ServiceBay cost estimates</h1>${calculator()}${contactStrip()}`],
 ];
