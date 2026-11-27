@@ -485,6 +485,23 @@ test('Traffic source & device attribution tracks visits, compares platforms in a
     assert.equal(trk.status,200);
     const trkJson=await trk.json();
     assert.equal(trkJson.status,'Received');
+
+    // Country, page, and service-click analytics + custom social, menu, currencies in settings
+    await call('/api/analytics/visit',{config:erpCfg,post:{source:'Google',device:'Mobile',page:'/services/ac-hvac/',country:'UAE'}});
+    await call('/api/analytics/visit',{config:erpCfg,post:{event:'service_click',service:'AC & HVAC',source:'Google',device:'Mobile',page:'/services/ac-hvac/',country:'UAE'}});
+    const ov2=await (await call('/api/admin/overview',{admin:true,config:erpCfg})).json();
+    assert.ok(ov2.sources.countries.some(c=>c.country==='UAE'&&c.total>=1));
+    assert.ok(ov2.sources.pages.some(p=>p.page==='/services/ac-hvac/'&&p.total>=1));
+    assert.ok(ov2.sources.serviceClicks.some(s=>s.service==='AC & HVAC'&&s.country==='UAE'));
+
+    const curContent=await (await call('/api/admin/content?scope=site',{admin:true,config:erpCfg})).json();
+    const updatedSet={...curContent.draft,social:[{label:'Instagram',url:'https://instagram.com/servicebay'}],menu:[{label:'Home',href:'/',enabled:true},{label:'Helpdesk',href:'/complaints/',enabled:true}],currencies:[{code:'US',name:'USA',currency:'USD',rate:0.2723}]};
+    const pubRes=await call('/api/admin/content?scope=site',{admin:true,config:erpCfg,post:{action:'publish',version:curContent.version,value:updatedSet}});
+    assert.equal(pubRes.status,200);
+    const customHome=await (await call('/',{config:erpCfg})).text();
+    assert.match(customHome,/https:\/\/instagram\.com\/servicebay/);
+    assert.match(customHome,/href="\/complaints\/">Helpdesk/);
+    assert.match(customHome,/value="US">USA \(USD\)/);
   }finally{globalThis.fetch=original}
 });
 

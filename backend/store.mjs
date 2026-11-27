@@ -47,15 +47,21 @@ export function records(query, dialect="sqlite", batch, actor="ServiceBay") {
     async sourceReport(since=''){
       const src="COALESCE(NULLIF("+scalar('source')+",''),'Direct')";
       const dev="COALESCE(NULLIF("+scalar('device')+",''),'Unknown')";
+      const cty="COALESCE(NULLIF("+scalar('country')+",''),'Unknown')";
+      const pg="COALESCE(NULLIF("+scalar('page')+",''),'/')";
+      const svc="COALESCE(NULLIF("+scalar('service')+",''),'General')";
       const created=scalar('created');
       const cond=since?" AND "+created+">=?":"";
       const args=since?[since]:[];
-      const [visits,leads,devices]=await Promise.all([
+      const [visits,leads,devices,countries,pages,serviceClicks]=await Promise.all([
         query("SELECT "+src+" AS source,count(*) AS total FROM servicebay_records WHERE key LIKE 'visit/%'"+cond+" GROUP BY 1 ORDER BY 2 DESC",args),
         query("SELECT "+src+" AS source,count(*) AS total FROM servicebay_records WHERE key LIKE 'request/%'"+cond+" GROUP BY 1 ORDER BY 2 DESC",args),
-        query("SELECT "+dev+" AS device,count(*) AS total FROM servicebay_records WHERE (key LIKE 'visit/%' OR key LIKE 'request/%')"+cond+" GROUP BY 1 ORDER BY 2 DESC",args)
+        query("SELECT "+dev+" AS device,count(*) AS total FROM servicebay_records WHERE (key LIKE 'visit/%' OR key LIKE 'request/%')"+cond+" GROUP BY 1 ORDER BY 2 DESC",args),
+        query("SELECT "+cty+" AS country,count(*) AS total FROM servicebay_records WHERE (key LIKE 'visit/%' OR key LIKE 'click/%' OR key LIKE 'request/%')"+cond+" GROUP BY 1 ORDER BY 2 DESC LIMIT 15",args),
+        query("SELECT "+pg+" AS page,count(*) AS total FROM servicebay_records WHERE key LIKE 'visit/%'"+cond+" GROUP BY 1 ORDER BY 2 DESC LIMIT 15",args),
+        query("SELECT "+svc+" AS service,"+cty+" AS country,count(*) AS total FROM servicebay_records WHERE key LIKE 'click/%'"+cond+" GROUP BY 1,2 ORDER BY 3 DESC LIMIT 20",args)
       ]);
-      return {visits,leads,devices};
+      return {visits,leads,devices,countries,pages,serviceClicks};
     },
     async remove(key){await query('DELETE FROM servicebay_records WHERE key=? RETURNING key',[key])},
     async pruneSessions(){await query("DELETE FROM servicebay_records WHERE key LIKE 'session/%' AND updated < ? RETURNING key",[new Date(Date.now()-86400000).toISOString()])},

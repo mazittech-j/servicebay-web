@@ -93,10 +93,61 @@
       const colorInputs={};
       for(const [key,label] of Object.entries(colorFields))colorInputs[key]=bind(field(grid,label,data[key]||cfg.defaults[key],'color'),key);
       buttons(theme,button('Reset website colors',()=>{for(const k of Object.keys(colorFields)){data[k]=cfg.defaults[k];colorInputs[k].value=cfg.defaults[k]}dirty=true;notice.textContent='Website colors reset to defaults. Publish changes to apply.'},'secondary'));
+      const navCard=card(panel,'Navigation menu');navCard.append(el('p','Customize your top menubar links or add new pages/external links.'));
+      const defNav=[{label:'Home',href:'/',enabled:true},{label:'Services',href:'/services/',enabled:true},{label:'AMC Plans',href:'/amc/',enabled:true},{label:'Cost estimator',href:'/estimate/',enabled:true},{label:'About Us',href:'/about/',enabled:true},{label:'Service areas',href:'/service-areas/',enabled:true},{label:'Contact',href:'/contact/',enabled:true}];
+      if(!Array.isArray(data.menu)||!data.menu.length)data.menu=structuredClone(defNav);
+      const navList=el('div');navCard.append(navList);
+      function drawMenu(){
+        navList.replaceChildren();
+        data.menu.forEach((m,idx)=>{
+          const row=el('div',undefined,'fields');
+          const lbl=field(row,'Menu label',m.label);lbl.oninput=()=>{m.label=lbl.value;dirty=true};
+          const url=field(row,'Link URL (/path or https://...)',m.href);url.oninput=()=>{m.href=url.value;dirty=true};
+          const chkWrap=el('label',undefined,'check'),chk=el('input');chk.type='checkbox';chk.checked=m.enabled!==false;chk.onchange=()=>{m.enabled=chk.checked;dirty=true};chkWrap.append(chk,document.createTextNode(' Show in menubar'));
+          row.append(chkWrap,button('Remove',()=>{data.menu.splice(idx,1);dirty=true;drawMenu()},'secondary'));
+          navList.append(row);
+        });
+      }
+      drawMenu();
+      buttons(navCard,button('Add menu link',()=>{data.menu.push({label:'New link',href:'/contact/',enabled:true});dirty=true;drawMenu()},'secondary'),button('Reset default menu',()=>{data.menu=[];dirty=true;drawMenu()},'secondary'));
+
+      const curCard=card(panel,'Currencies & countries');curCard.append(el('p','Add extra currencies (converted from 1 AED) to appear in the website top bar and cost estimator.'));
+      if(!Array.isArray(data.currencies))data.currencies=[];
+      const curList=el('div');curCard.append(curList);
+      function drawCur(){
+        curList.replaceChildren();
+        data.currencies.forEach((c,idx)=>{
+          const row=el('div',undefined,'fields');
+          const code=field(row,'Country code (e.g. US, GB, BD)',c.code);code.maxLength=6;code.oninput=()=>{c.code=code.value.toUpperCase();dirty=true};
+          const name=field(row,'Country name',c.name);name.oninput=()=>{c.name=name.value;dirty=true};
+          const curr=field(row,'Currency (3-letter e.g. USD, GBP, BDT)',c.currency);curr.maxLength=3;curr.oninput=()=>{c.currency=curr.value.toUpperCase();dirty=true};
+          const rate=field(row,'Rate per 1 AED',c.rate,'number');rate.step='0.0001';rate.min='0.0001';rate.oninput=()=>{c.rate=Number(rate.value)||1;dirty=true};
+          row.append(button('Remove',()=>{data.currencies.splice(idx,1);dirty=true;drawCur()},'secondary'));
+          curList.append(row);
+        });
+      }
+      drawCur();
+      buttons(curCard,button('Add currency',()=>{data.currencies.push({code:'US',name:'USA',currency:'USD',rate:0.2723});dirty=true;drawCur()},'secondary'));
       actions(panel);return;
     }
     const c=card(panel,'Measurement & verification');c.append(el('p','Measurement starts after a visitor allows it. Leave an ID empty to disable that integration.'));const g=el('div',undefined,'fields');c.append(g);
     for(const [key,label] of Object.entries({ga:'Google Analytics 4 measurement ID',ads:'Google Ads tag ID',pixel:'Meta Pixel ID (Facebook / Instagram)',tiktok:'TikTok Pixel ID',gtm:'Google Tag Manager ID',verification:'Search Console verification token'}))bind(field(g,label,data[key]),key);actions(c);
+    const socCard=card(panel,'Social media links');socCard.append(el('p','Add your Facebook, Instagram, LinkedIn, YouTube, TikTok, or X profiles to appear on the website footer.'));
+    if(!Array.isArray(data.social))data.social=[];
+    const socList=el('div');socCard.append(socList);
+    function drawSoc(){
+      socList.replaceChildren();
+      data.social.forEach((s,idx)=>{
+        const row=el('div',undefined,'fields');
+        const lbl=field(row,'Platform name (e.g. Facebook, Instagram)',s.label);lbl.maxLength=40;lbl.oninput=()=>{s.label=lbl.value;dirty=true};
+        const url=field(row,'Profile URL (https://...)',s.url,'url');url.maxLength=300;url.oninput=()=>{s.url=url.value;dirty=true};
+        row.append(button('Remove',()=>{data.social.splice(idx,1);dirty=true;drawSoc()},'secondary'));
+        socList.append(row);
+      });
+    }
+    drawSoc();
+    buttons(socCard,button('Add social link',()=>{data.social.push({label:'Instagram',url:'https://instagram.com/'});dirty=true;drawSoc()},'secondary'));
+    actions(socCard);
     const conn=card(panel,'ServiceHub ERP & payments');
     const erpBox=el('div');conn.append(erpBox);
     const drawErp=(i)=>{
@@ -251,6 +302,36 @@
         hd.append(el('span',d.device),el('strong',d.total+' ('+Math.round(d.total/devTotal*100)+'%)'));
         fl.style.width=(d.total/devices[0].total*100)+'%';tr.append(fl);line.append(hd,tr);dCard.append(line);
       }
+    }
+    const countries=sources?.countries||[],pgs=sources?.pages||[],clicks=sources?.serviceClicks||[];
+    const cCard=card(wrap,'Visitors & clicks by country');
+    if(!countries.length){cCard.append(el('p','Country breakdown will appear as visitors browse or click services.','empty-state'))}
+    else{
+      const maxC=Math.max(1,...countries.map(c=>c.total));
+      for(const c of countries){
+        const line=el('div',undefined,'demand-item'),hd=el('div',undefined,'case-line'),tr=el('div',undefined,'demand-track'),fl=el('i');
+        hd.append(el('span',c.country),el('strong',String(c.total)));
+        fl.style.width=(c.total/maxC*100)+'%';tr.append(fl);line.append(hd,tr);cCard.append(line);
+      }
+    }
+    const pgCard=card(wrap,'Most visited pages');
+    if(!pgs.length){pgCard.append(el('p','Page visits will appear as visitors navigate your website.','empty-state'))}
+    else{
+      const maxP=Math.max(1,...pgs.map(p=>p.total));
+      for(const p of pgs){
+        const line=el('div',undefined,'demand-item'),hd=el('div',undefined,'case-line'),tr=el('div',undefined,'demand-track'),fl=el('i');
+        hd.append(el('span',p.page),el('strong',String(p.total)));
+        fl.style.width=(p.total/maxP*100)+'%';tr.append(fl);line.append(hd,tr);pgCard.append(line);
+      }
+    }
+    const scCard=card(wrap,'Service clicks by country');
+    if(!clicks.length){scCard.append(el('p','Service & AMC clicks by country will appear here.','empty-state'))}
+    else{
+      const reg=el('div',undefined,'table-scroll'),tbl=el('table',undefined,'report-table'),thd=el('thead'),hr=el('tr');
+      for(const h of ['Service / Plan','Country','Clicks'])hr.append(el('th',h));thd.append(hr);tbl.append(thd);
+      const tb=el('tbody');
+      for(const row of clicks){const tr=el('tr');tr.append(el('th',row.service),el('td',row.country),el('td',String(row.total)));tb.append(tr)}
+      tbl.append(tb);reg.append(tbl);scCard.append(reg);
     }
   }
   async function overview(ticket){

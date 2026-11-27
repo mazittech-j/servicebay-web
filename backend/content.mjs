@@ -3,16 +3,19 @@ import {catalog,addCustomToPage} from './catalog.mjs';
 import {pricing} from './generated.mjs';
 import {parseHTML} from 'linkedom';
 export const EMPTY_PAGE={title:'',description:'',changes:{},sections:[],hidden:[]};
-export const defaults={pricing,typography:{},name:'ServiceBay',logo:'/assets/servicebay-wordmark.webp',hours:'Mon–Sat, 8:00 AM–6:00 PM',phone:'+971562014647',whatsapp:'971562014647',email:'maz.ittech@gmail.com',address:'Office 410, Opal Tower, Business Bay, Dubai, United Arab Emirates',font:'Site default',size:16,color:'#ac3212',paper:'#f9f8f5',ink:'#191917',dark:'#211f1c',tint:'#f0ede6',muted:'#55534e',line:'#dedbd4',ga:'',ads:'',pixel:'',tiktok:'',gtm:'',verification:''};
+export const defaults={pricing,typography:{},social:[],menu:[],currencies:[],name:'ServiceBay',logo:'/assets/servicebay-wordmark.webp',hours:'Mon–Sat, 8:00 AM–6:00 PM',phone:'+971562014647',whatsapp:'971562014647',email:'maz.ittech@gmail.com',address:'Office 410, Opal Tower, Business Bay, Dubai, United Arab Emirates',font:'Site default',size:16,color:'#ac3212',paper:'#f9f8f5',ink:'#191917',dark:'#211f1c',tint:'#f0ede6',muted:'#55534e',line:'#dedbd4',ga:'',ads:'',pixel:'',tiktok:'',gtm:'',verification:''};
 export const fonts=['Site default','Segoe UI','Arial','Georgia','Verdana','Tahoma'];
 export const fail=(message,status=400)=>{throw Object.assign(new Error(message),{status})};
 export function txt(value,max=3000){if(typeof value!=='string'||value.length>max)fail('Check field length.');return value.trim()}
 export function imageUrl(s){s=txt(s,1500);if(!/^\/(assets|media)\/[\w./-]+$/.test(s)&&!/^https:\/\/[^\s"<>\\]+$/i.test(s))fail('Use a site image or an HTTPS image URL.');return s}
 export function cleanSettings(x){
   const out={};
-  for(const k of Object.keys(defaults).filter(k=>k!=='pricing'&&k!=='typography')) out[k]=k==='size'?Number(x[k]??defaults.size):txt(x[k]??defaults[k],k==='logo'?1500:k==='address'?300:120);
+  for(const k of Object.keys(defaults).filter(k=>!['pricing','typography','social','menu','currencies'].includes(k))) out[k]=k==='size'?Number(x[k]??defaults.size):txt(x[k]??defaults[k],k==='logo'?1500:k==='address'?300:120);
   out.typography=cleanTypography(x.typography,fail);
   out.pricing=catalog(x.pricing||pricing,pricing,fail);
+  out.social=Array.isArray(x.social)?x.social.slice(0,15).map(s=>({label:txt(String(s?.label||''),40),url:txt(String(s?.url||''),300)})).filter(s=>s.label&&/^https:\/\//i.test(s.url)):[];
+  out.menu=Array.isArray(x.menu)?x.menu.slice(0,20).map(m=>({label:txt(String(m?.label||''),40),href:txt(String(m?.href||''),200),enabled:m?.enabled!==false})).filter(m=>m.label&&(/^\/[^\s"<>\\]*$/.test(m.href)||/^https:\/\//i.test(m.href))):[];
+  out.currencies=Array.isArray(x.currencies)?x.currencies.slice(0,20).map(c=>({code:txt(String(c?.code||''),8).toUpperCase(),name:txt(String(c?.name||''),40),currency:txt(String(c?.currency||''),8).toUpperCase(),rate:Number(c?.rate||0)})).filter(c=>/^[A-Z0-9]{2,6}$/.test(c.code)&&c.name&&/^[A-Z]{3}$/.test(c.currency)&&Number.isFinite(c.rate)&&c.rate>0):[];
   out.logo=imageUrl(out.logo);
   if(!out.name||!out.address||!/^(\+)[1-9]\d{6,14}$/.test(out.phone)||!/^[1-9]\d{6,14}$/.test(out.whatsapp)||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(out.email))fail('Check company name, address, email and international numbers.');
   if(!fonts.includes(out.font)||!Number.isInteger(out.size)||out.size<14||out.size>24||![out.color,out.paper,out.ink,out.dark,out.tint,out.muted,out.line].every(v=>/^#[a-f\d]{6}$/i.test(v)))fail('Check your theme settings.');
@@ -98,6 +101,27 @@ export function renderPage(html,settings,page,editing=false){
     const v=JSON.parse(el.textContent,(k,x)=>typeof x==='string'&&!x.startsWith('https://')?(fieldChanges.get(x)??substitute(x)):x);
     for(const n of v['@graph']||[]){if(n['@type']==='HomeAndConstructionBusiness'){n.name=s.name;if(s.hours!==defaults.hours){delete n.openingHours}if(s.logo!==defaults.logo)n.logo=new URL(s.logo,n.url).href;n.email=s.email;n.telephone=s.phone;if(s.address!==defaults.address)n.address.streetAddress=s.address}if(n['@id']?.endsWith('#page')){n.name=title;n.description=desc}if(n['@type']==='Service')n.description=desc}
     el.textContent=JSON.stringify(v).replace(/</g,'\\u003c');
+  }
+  if(Array.isArray(s.social)&&s.social.length){
+    const fc=d.querySelector('.footer-dispatch .footer-contact')||d.querySelector('.site-footer');
+    if(fc){for(const item of s.social){const li=d.createElement('li'),a=d.createElement('a');a.setAttribute('href',item.url);a.setAttribute('target','_blank');a.setAttribute('rel','noopener noreferrer');a.textContent=item.label;li.append(a);fc.append(li)}}
+  }
+  if(Array.isArray(s.menu)&&s.menu.length){
+    const navEl=d.querySelector('#navigation');
+    if(navEl){
+      const mob=navEl.querySelector('.mobile-tools');
+      for(const child of [...navEl.childNodes]){if(child!==mob)child.remove()}
+      for(const m of s.menu){if(m.enabled===false)continue;const a=d.createElement('a');a.setAttribute('href',m.href);a.textContent=m.label;if(m.href.startsWith('https://')){a.setAttribute('target','_blank');a.setAttribute('rel','noopener noreferrer')}if(mob)navEl.insertBefore(a,mob);else navEl.append(a)}
+    }
+  }
+  if(Array.isArray(s.currencies)&&s.currencies.length){
+    for(const sel of d.querySelectorAll('select[data-region-select],select[name="country"]')){
+      for(const c of s.currencies){if(sel.querySelector('option[value="'+c.code+'"]'))continue;const opt=d.createElement('option');opt.setAttribute('value',c.code);opt.textContent=c.name+' ('+c.currency+')';sel.append(opt)}
+    }
+    for(const cl of d.querySelectorAll('.country-list')){
+      for(const c of s.currencies){if(cl.querySelector('button[data-country="'+c.code+'"]'))continue;const b=d.createElement('button');b.setAttribute('type','button');b.setAttribute('data-country',c.code);b.setAttribute('aria-pressed','false');const sp=d.createElement('span');sp.textContent=c.name;const sm=d.createElement('small');sm.textContent=c.currency;b.append(sp,sm);cl.append(b)}
+    }
+    meta(d,'sb-currencies',JSON.stringify(s.currencies));
   }
   if(s.verification){let v=d.querySelector('meta[name="google-site-verification"]');if(!v){v=d.createElement('meta');v.setAttribute('name','google-site-verification');d.head.append(v)}v.setAttribute('content',s.verification)}
   const font=s.font==='Site default'?'':';--sans:"'+s.font+'",sans-serif';

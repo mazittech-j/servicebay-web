@@ -334,12 +334,18 @@ export async function serve(request,env,store,platform){
       }
     }
     if(path==='/api/analytics/visit'&&method==='POST'){
-      await store.limit('rate/visit/'+await digest(platform.ip||'shared'),40,10);
+      await store.limit('rate/visit/'+await digest(platform.ip||'shared'),60,10);
       const x=await body(request,1024);
       const source=txt(x.source||'Direct',40)||'Direct';
       const medium=txt(x.medium||'',40),campaign=txt(x.campaign||'',60),device=txt(x.device||'Desktop',20)||'Desktop',page=txt(x.page||'/',120)||'/';
+      const hdrCty=request.cf?.country||request.headers.get('cf-ipcountry')||request.headers.get('x-vercel-ip-country')||'';
+      const country=txt(String((hdrCty&&hdrCty!=='XX'?hdrCty:'')||x.country||'Unknown'),60)||'Unknown';
       const now=new Date().toISOString();
-      await store.save('visit/'+now+'/'+crypto.randomUUID(),{source,medium,campaign,device,page,created:now},0);
+      if(x.event==='service_click'&&x.service){
+        await store.save('click/'+now+'/'+crypto.randomUUID(),{service:txt(String(x.service),90),page,country,source,device,created:now},0);
+      }else{
+        await store.save('visit/'+now+'/'+crypto.randomUUID(),{source,medium,campaign,device,page,country,created:now},0);
+      }
       return json({ok:true});
     }
     if(adminRoute&&!studioUser){
@@ -502,7 +508,10 @@ export async function serve(request,env,store,platform){
       for(const l of srcRaw.leads){const s=l.source||'Direct',cur=map.get(s)||{source:s,visits:0,leads:0};cur.leads+=Number(l.total);map.set(s,cur)}
       const platforms=[...map.values()].sort((a,b)=>(b.leads-a.leads)||(b.visits-a.visits));
       const devices=srcRaw.devices.map(d=>({device:d.device||'Unknown',total:Number(d.total)}));
-      const sources={platforms,devices,totalVisits:platforms.reduce((s,p)=>s+p.visits,0),totalLeads:platforms.reduce((s,p)=>s+p.leads,0)};
+      const countries=(srcRaw.countries||[]).map(c=>({country:c.country||'Unknown',total:Number(c.total)}));
+      const pages=(srcRaw.pages||[]).map(p=>({page:p.page||'/',total:Number(p.total)}));
+      const serviceClicks=(srcRaw.serviceClicks||[]).map(s=>({service:s.service||'General',country:s.country||'Unknown',total:Number(s.total)}));
+      const sources={platforms,devices,countries,pages,serviceClicks,totalVisits:platforms.reduce((s,p)=>s+p.visits,0),totalLeads:platforms.reduce((s,p)=>s+p.leads,0)};
       if(path.endsWith('service-report'))return json({...report,sources});
       const [inbox,activity,daily]=await Promise.all([store.inbox(),store.activity(undefined,'',5),store.dailyRequests(period.weekStart)]);
       const byDay=new Map(daily.map(r=>[r.day,Number(r.total)]));

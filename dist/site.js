@@ -236,12 +236,25 @@ const siteAttribution=(()=>{
   const detected=mapSource(utm)||mapSource(refHost)||(refHost?'Referral ('+refHost.slice(0,26)+')':'Direct');
   const attr=saved&&(!utm&&saved.source!=='Direct')?saved:{source:utm?mapSource(utm):detected,medium:q.get('utm_medium')||(refHost?'referral':'direct'),campaign:q.get('utm_campaign')||'',device,landingPage:saved?.landingPage||location.pathname};
   try{
+    const cMeta=document.querySelector('meta[name="sb-currencies"]')?.getAttribute('content');
+    if(cMeta&&typeof siteRegions!=='undefined'){for(const c of JSON.parse(cMeta)){if(c.code&&!siteRegions[c.code])siteRegions[c.code]={name:c.name,short:c.name,currency:c.currency,rate:Number(c.rate)||1,areaLabel:'Area',areas:['Central','Business District'],timeZone:'Asia/Dubai'}}}
+  }catch{}
+  const getCountry=()=>{try{const sel=document.querySelector('select[data-region-select]');const code=sel?.value||'';return (typeof siteRegions!=='undefined'&&siteRegions[code]?.name)||''}catch{return ''}};
+  try{
     sessionStorage.setItem('servicebay-source',JSON.stringify(attr));
-    if(!sessionStorage.getItem('servicebay-visit-logged')&&!q.has('studio')){
-      sessionStorage.setItem('servicebay-visit-logged','1');
-      fetch('/api/analytics/visit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...attr,page:location.pathname}),keepalive:true}).catch(()=>{});
+    const pageKey='sb-pv-'+location.pathname;
+    if(!sessionStorage.getItem(pageKey)&&!q.has('studio')){
+      sessionStorage.setItem(pageKey,'1');
+      fetch('/api/analytics/visit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...attr,page:location.pathname,country:getCountry()}),keepalive:true}).catch(()=>{});
     }
   }catch{}
+  document.addEventListener('click',e=>{
+    if(q.has('studio'))return;
+    const target=e.target.closest('a[href^="/services/"],[data-amc-plan],[data-open-quote]');
+    if(!target)return;
+    const svc=target.getAttribute('data-amc-plan')||target.textContent?.trim().slice(0,80)||target.getAttribute('href')||'Service';
+    fetch('/api/analytics/visit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...attr,event:'service_click',service:svc,page:location.pathname,country:getCountry()}),keepalive:true}).catch(()=>{});
+  },{passive:true});
   return attr;
 })();
 
