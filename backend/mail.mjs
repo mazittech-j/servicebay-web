@@ -10,26 +10,32 @@ async function cipher(env){
 }
 async function settings(db,env,withKey=false){
   const saved=(await db.get('security/mail')).data,from=saved?.from||env.RECEIPT_FROM_EMAIL||'';
-  let key=env.RESEND_API_KEY||'';
+  let key=env.BREVO_API_KEY||env.RESEND_API_KEY||'';
   if(saved?.secret&&withKey)key=new TextDecoder().decode(await crypto.subtle.decrypt({name:'AES-GCM',iv:decode(saved.iv)},await cipher(env),decode(saved.secret)));
-  return {from,configured:!!(from&&(saved?.secret||key)),editable:true,...(withKey?{key}:{})};
+  const provider=saved?.provider||(env.BREVO_API_KEY&&!saved?.secret?'brevo':'resend');
+  return {from,provider,configured:!!(from&&(saved?.secret||key)),editable:true,...(withKey?{key}:{})};
 }
 export async function mailSettings(db,env,input){
   if(input){
     const from=String(input.from||'').trim(),key=String(input.key||'').trim();
-    if(from.length>150||!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(from))reject('Enter an address on your verified sending domain.');
-    const row=await db.get('security/mail');let value={...row.data,from};
+    if(from.length>150||!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(from))reject('Enter a valid sender email address.');
+    const row=await db.get('security/mail');
+    let provider=key.startsWith('xkeysib-')?'brevo':key.startsWith('re_')?'resend':(input.provider==='brevo'?'brevo':input.provider==='resend'?'resend':(row.data?.provider||'resend'));
+    let value={...row.data,from,provider};
     if(key){
-      if(!/^re_[A-Za-z0-9_-]{10,160}$/.test(key))reject('Enter a Resend sending API key.');
+      const validBrevo=/^xkeysib-[A-Za-z0-9_.-]{16,220}$/.test(key);
+      const validResend=/^re_[A-Za-z0-9_-]{10,160}$/.test(key);
+      if(!validBrevo&&!validResend)reject('Enter a valid Brevo (xkeysib-…) or Resend (re_…) API key.');
+      provider=validBrevo?'brevo':'resend';
       const iv=crypto.getRandomValues(new Uint8Array(12));
-      value={from,iv:encode(iv),secret:encode(await crypto.subtle.encrypt({name:'AES-GCM',iv},await cipher(env),encoder.encode(key)))};
-    }else if(!value.secret&&!env.RESEND_API_KEY)reject('Add a sending API key.');
-    await db.save('security/mail',value,row.version,event('Email','Saved receipt sender settings'));
+      value={from,provider,iv:encode(iv),secret:encode(await crypto.subtle.encrypt({name:'AES-GCM',iv},await cipher(env),encoder.encode(key)))};
+    }else if(!value.secret&&!env.RESEND_API_KEY&&!env.BREVO_API_KEY)reject('Add a sending API key.');
+    await db.save('security/mail',value,row.version,event('Email','Saved receipt sender settings',provider));
   }
   const config=await settings(db,env);
   const row=await db.get('security/mail'),test=(await db.get('security/mail-test')).data;
   const fallbackRecipient=await resolveOwnerEmail(db,env);
-  return {...config,fallbackRecipient,envStatus:{hasResendKey:!!(row.data?.secret||env.RESEND_API_KEY),hasFromEmail:!!config.from,hasMailKey:!!env.MAIL_SETTINGS_KEY},lastTest:test?.revision===row.version&&test.from===config.from?{status:test.status,at:test.at}:null};
+  return {...config,fallbackRecipient,envStatus:{hasResendKey:!!(row.data?.secret||env.RESEND_API_KEY||env.BREVO_API_KEY),hasFromEmail:!!config.from,hasMailKey:!!env.MAIL_SETTINGS_KEY},lastTest:test?.revision===row.version&&test.from===config.from?{status:test.status,at:test.at}:null};
 }
 async function mutate(db,key,transform,activity){
   for(let i=0;i<5;i++){
@@ -39,6 +45,20 @@ async function mutate(db,key,transform,activity){
   }
   reject('The request changed. Refresh and retry.',409);
 }
+async function sendViaProvider(config,{from,to,subject,text,idempotencyKey,timeoutMs=8000}){
+  const useBrevo=config.provider==='brevo'||String(config.key||'').startsWith('xkeysib-');
+  if(useBrevo){
+    const response=await fetch('https://api.brevo.com/v3/smtp/email',{method:'POST',redirect:'error',signal:AbortSignal.timeout(timeoutMs),headers:{'api-key':config.key,'Content-Type':'application/json',Accept:'application/json'},body:JSON.stringify({sender:{name:'ServiceBay',email:from},to:[{email:to}],subject,textContent:text})});
+    let data={};try{data=await response.json()}catch{}
+    return {response,ok:response.ok,id:data.messageId||(response.ok?'brevo':''),errorMsg:data.message||data.code||''};
+  }
+  const headers={Authorization:'Bearer '+config.key,'Content-Type':'application/json'};
+  if(idempotencyKey)headers['Idempotency-Key']=idempotencyKey;
+  const response=await fetch('https://api.resend.com/emails',{method:'POST',redirect:'error',signal:AbortSignal.timeout(timeoutMs),headers,body:JSON.stringify({from:'ServiceBay <'+from+'>',to:[to],subject,text})});
+  let data={};try{data=await response.json()}catch{}
+  return {response,ok:response.ok&&!!data.id,id:data.id||'',errorMsg:data.message||data.name||''};
+}
+
 export async function sendReceipt(db,env,key,siteOrigin){
   const config=await settings(db,env,true);
   let row=(await db.get(key)).data;
@@ -58,12 +78,11 @@ export async function sendReceipt(db,env,key,siteOrigin){
   if(intent.mail.status==='Accepted')return 'Accepted';
   const m=intent.mail;
   if(Date.now()-m.started>=86400000)return 'Needs delivery check';
-  const message={from:'ServiceBay <'+m.from+'>',to:[intent.email],subject:'Your ServiceBay quote request receipt',text:'We received your '+(intent.service||'service')+' request.\n\nYour private receipt code is '+intent.receipt+'\n\nOpen your customer portal: '+m.link+'\n\nKeep this receipt private.\nServiceBay Technical Services'};
   let status='Sending',id;
   try{
-    const result=await fetch('https://api.resend.com/emails',{method:'POST',redirect:'error',signal:AbortSignal.timeout(4000),headers:{Authorization:'Bearer '+config.key,'Content-Type':'application/json','Idempotency-Key':intent.external+'-receipt-'+m.attempt},body:JSON.stringify(message)});
-    if(result.ok){const response=await result.json();if(response.id){status='Accepted';id=response.id}}
-    else if(result.status>=400&&result.status<500&&![408,409,429].includes(result.status))status='Rejected';
+    const res=await sendViaProvider(config,{from:m.from,to:intent.email,subject:'Your ServiceBay quote request receipt',text:'We received your '+(intent.service||'service')+' request.\n\nYour private receipt code is '+intent.receipt+'\n\nOpen your customer portal: '+m.link+'\n\nKeep this receipt private.\nServiceBay Technical Services',idempotencyKey:intent.external+'-receipt-'+m.attempt,timeoutMs:4000});
+    if(res.ok){status='Accepted';id=res.id}
+    else if(res.response.status>=400&&res.response.status<500&&![408,409,429].includes(res.response.status))status='Rejected';
   }catch{/* The same key can be safely retried inside the provider's time window. */}
   if(status!=='Sending')await mutate(db,key,r=>r.mail?.attempt===m.attempt&&r.mail.status!=='Accepted'?{...r,mail:{...r.mail,status,id}}:null,event('Email',status==='Accepted'?'Receipt accepted by provider':'Receipt rejected by provider',row.service||'Service quote'));
   return status;
@@ -81,12 +100,15 @@ export async function testSender(db,env,user){
   if(!recipient)reject('Set a contact email in My account before sending a test.');
   await db.limit('rate/receipt-test',4,10);
   const old=await db.get('security/mail-test'),at=new Date().toISOString();
-  const payload={from:'ServiceBay <'+config.from+'>',to:[recipient],subject:'ServiceBay receipt email test',text:'Your ServiceBay studio requested this test of the receipt email sender. No customer request was created.'};
+  const subj='ServiceBay receipt email test',body='Your ServiceBay studio requested this test of the receipt email sender. No customer request was created.';
   let status='Unconfirmed';
   try{
-    const response=await fetch('https://api.resend.com/emails',{method:'POST',redirect:'error',signal:AbortSignal.timeout(8000),headers:{Authorization:'Bearer '+config.key,'Content-Type':'application/json','Idempotency-Key':'sb-test-'+await hash(JSON.stringify(payload)+row.version+Math.floor(Date.now()/60000))},body:JSON.stringify(payload)});
-    if(response.ok&&(await response.json()).id)status='Accepted';
-    else if(!response.ok)status=response.status===401?'Invalid sending key':response.status===403?'Check key permissions and sender domain':response.status===429?'Provider rate limit':'Provider error ('+response.status+')';
+    const res=await sendViaProvider(config,{from:config.from,to:recipient,subject:subj,text:body,idempotencyKey:'sb-test-'+await hash(config.from+recipient+row.version+Math.floor(Date.now()/60000)),timeoutMs:8000});
+    if(res.ok)status='Accepted';
+    else{
+      const st=res.response.status;
+      status=st===401?'Invalid sending key':st===403?(res.errorMsg||'Check key permissions and sender domain'):st===429?'Provider rate limit':('Provider error ('+st+')'+(res.errorMsg?': '+String(res.errorMsg).slice(0,90):''));
+    }
   }catch{/* A timeout cannot establish delivery. */}
   await db.save('security/mail-test',{from:config.from,revision:row.version,at,status},old.version,event('Email','Tested receipt sender',status));
   return {status,at};
@@ -96,13 +118,10 @@ export async function sendSystemEmail(db,env,{to,subject,text,idempotencyKey}){
   if(!to||!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(to))return 'No recipient';
   const config=await settings(db,env,true);
   if(!config.configured)return 'Awaiting email setup';
-  const payload={from:'ServiceBay <'+config.from+'>',to:[to],subject,text};
   try{
-    const headers={Authorization:'Bearer '+config.key,'Content-Type':'application/json'};
-    if(idempotencyKey)headers['Idempotency-Key']=idempotencyKey;
-    const response=await fetch('https://api.resend.com/emails',{method:'POST',redirect:'error',signal:AbortSignal.timeout(8000),headers,body:JSON.stringify(payload)});
-    if(response.ok&&(await response.json()).id)return 'Accepted';
-    return 'Provider error ('+response.status+')';
+    const res=await sendViaProvider(config,{from:config.from,to,subject,text,idempotencyKey,timeoutMs:8000});
+    if(res.ok)return 'Accepted';
+    return 'Provider error ('+res.response.status+')';
   }catch{return 'Unconfirmed'}
 }
 

@@ -399,11 +399,12 @@
   }
   async function emailConfig(ticket){
     const x=await api('mail');if(ticket!==epoch)return;
-    const c=card(panel,'Receipt & alert email (Resend)'),status=el('p',x.configured?'Sender configured. Receipts and security alerts use this sender.':'Email delivery is awaiting a verified sender. Quotes are saved in the customer portal.');
+    const c=card(panel,'Receipt & alert email (Brevo / Resend)'),status=el('p',x.configured?'Sender configured. Receipts and security alerts use this sender.':'Email delivery is awaiting a verified sender. Quotes are saved in the customer portal.');
     c.append(status);
     if(x.envStatus){
       const chips=el('div',undefined,'env-list');
       chips.append(
+        el('span','Provider: '+(x.provider==='brevo'?'Brevo':'Resend'),'status-chip'),
         el('span','API key: '+(x.envStatus.hasResendKey?'Set':'Missing'),'status-chip'),
         el('span','From email: '+(x.envStatus.hasFromEmail?x.from:'Missing'),'status-chip'),
         el('span','In-app encryption: '+(x.envStatus.hasMailKey?'Enabled':'Env-only'),'status-chip')
@@ -418,9 +419,11 @@
     const host=el('div',undefined,'buttons');
     if(x.editable){
       const g=el('div',undefined,'fields');c.append(g);
-      const from=field(g,'Verified sender email',x.from,'email'),key=secret(g,'Resend sending API key',x.configured?'Leave blank to keep the current key':'re_…');
-      host.append(button('Save email sender',async()=>{const saved=await api('mail',{from:from.value,key:key.value});key.value='';dirty=false;x.configured=saved.configured;const rec=(cfg.user.email&&cfg.user.email.includes('@'))?cfg.user.email:(saved.fallbackRecipient||'');test.disabled=!saved.configured||!rec;result(saved.lastTest);status.textContent='Sender saved. Send a test to check provider acceptance.'},'primary'));
-    }else c.append(el('p','Configure RESEND_API_KEY and RECEIPT_FROM_EMAIL on your hosting provider (or add MAIL_SETTINGS_KEY to edit here).'));
+      const prov=field(g,'Email provider',x.provider==='brevo'?'Brevo (Free Gmail/single-sender)':'Resend (Custom domain)','text',['Brevo (Free Gmail/single-sender)','Resend (Custom domain)']);
+      const from=field(g,'Verified sender email',x.from,'email'),key=secret(g,'API key',x.configured?'Leave blank to keep the current key':(x.provider==='brevo'?'xkeysib-…':'re_…'));
+      prov.onchange=()=>{if(!x.configured)key.placeholder=prov.value.startsWith('Brevo')?'xkeysib-…':'re_…'};
+      host.append(button('Save email sender',async()=>{const pVal=prov.value.startsWith('Brevo')?'brevo':'resend';const saved=await api('mail',{provider:pVal,from:from.value,key:key.value});key.value='';dirty=false;x.configured=saved.configured;x.provider=saved.provider;const rec=(cfg.user.email&&cfg.user.email.includes('@'))?cfg.user.email:(saved.fallbackRecipient||'');test.disabled=!saved.configured||!rec;result(saved.lastTest);status.textContent='Sender saved ('+(saved.provider==='brevo'?'Brevo':'Resend')+'). Send a test to check provider acceptance.'},'primary'));
+    }else c.append(el('p','Configure BREVO_API_KEY or RESEND_API_KEY and RECEIPT_FROM_EMAIL on your hosting provider.'));
     test.disabled=!x.configured||!recipient;host.append(test);c.append(host,el('p',recipient?'Test recipient · '+recipient:'Set your email in My account or Brand & company to receive a test.','stamp'));
   }
   const defaultPrefs={preset:'default',bg:'#f3f5f6',card:'#ffffff',ink:'#152936',sidebar:'#132737',accent:'#ad3516',fontSize:14,headingScale:1,sidebarWidth:224,density:'standard',radius:11};

@@ -502,6 +502,25 @@ test('Traffic source & device attribution tracks visits, compares platforms in a
     assert.match(customHome,/https:\/\/instagram\.com\/servicebay/);
     assert.match(customHome,/href="\/complaints\/">Helpdesk/);
     assert.match(customHome,/value="US">USA \(USD\)/);
+
+    // Brevo email provider saves xkeysib- key and sends via api.brevo.com
+    const mailCfg={...erpCfg,MAIL_SETTINGS_KEY:'test-mail-secret-key-32-chars!!'};
+    const bSave=await call('/api/admin/mail',{admin:true,config:mailCfg,post:{provider:'brevo',from:'maz.ittech@gmail.com',key:'xkeysib-0123456789abcdef0123456789abcdef'}});
+    assert.equal(bSave.status,200);
+    const bSaved=await bSave.json();
+    assert.equal(bSaved.provider,'brevo');
+    assert.equal(bSaved.configured,true);
+    let brevoCalled=false;
+    globalThis.fetch=async(url,opts)=>{
+      if(String(url)==='https://api.brevo.com/v3/smtp/email'&&opts.headers['api-key']==='xkeysib-0123456789abcdef0123456789abcdef'){
+        brevoCalled=true;
+        return new Response(JSON.stringify({messageId:'<msg-1@brevo>'}),{status:201,headers:{'Content-Type':'application/json'}});
+      }
+      return new Response('Not found',{status:404});
+    };
+    const bTest=await (await call('/api/admin/mail-test',{admin:true,config:mailCfg,post:{}})).json();
+    assert.equal(brevoCalled,true);
+    assert.equal(bTest.status,'Accepted');
   }finally{globalThis.fetch=original}
 });
 
