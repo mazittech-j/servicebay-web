@@ -122,7 +122,7 @@
           erpActs.push(button('Push & Sync All',async()=>{
             const res=await api('erp',{action:'sync-all'});
             if(res.state)drawErp(res.state);
-            notice.textContent='Synced: '+res.sent+' quotes sent, '+(res.updated||0)+' statuses updated, '+(res.pricesUpdated||0)+' prices pulled'+(res.failed?' ('+res.failed+' failed: '+(res.errors?.[0]||'')+')':'.');
+            notice.textContent='Synced: '+res.sent+' quotes sent, '+(res.updated||0)+' statuses updated, '+(res.pricesUpdated||0)+' prices pulled'+(res.pricesUpdated===0&&res.pricingNote?' ('+res.pricingNote+')':'')+(res.failed?' ('+res.failed+' failed: '+(res.errors?.[0]||'')+')':'.');
           },'secondary'));
         }
         erpActs.push(button(i.paused?'Reconnect ERP':'Disconnect ERP',async()=>{
@@ -553,7 +553,7 @@
       const head=el('div',undefined,'section-head');head.append(el('h2',row.service||'Service quote'),stageBadge(row.status));detail.append(head,el('p',row.name,'case-client'));
       const erpText=row.erpId?('Delivered (#'+row.erpId+')'):(row.erpError?('Sync failed: '+row.erpError):'Stored on website');
       const srcText=[row.source||'Direct',row.medium,row.campaign,row.device].filter(Boolean).join(' · ');
-      facts(detail,[['Email',row.email],['Phone',row.phone],['Source',srcText],['Area',row.area],['Property',row.property],['Country',row.country],['Received',new Date(row.created).toLocaleString()],['Receipt email',row.emailState],['ServiceHub',erpText]]);
+      facts(detail,[['Email',row.email],['Phone',row.phone],['Source',srcText],['Preferred slot',row.slot],['Schedule',row.schedule],['Area',row.area],['Property',row.property],['Country',row.country],['Received',new Date(row.created).toLocaleString()],['Receipt email',row.emailState],['ServiceHub',erpText]]);
       if(row.details||row.message){const text=el('details'),s=el('summary','Request description');text.append(s,el('p',row.details||row.message,'preserve-lines'));text.open=true;detail.append(text)}
       const state=field(detail,'Request status',row.status,'text',stages);state.oninput=e=>e.stopPropagation();
       const actions=[button('Update status',async()=>{const res=await api('request',{key:row.key,previous:row.status,status:state.value});await refresh();notice.textContent='Request status updated.'+(res.emailStatus?' (Email: '+res.emailStatus+')':'')},'primary')];

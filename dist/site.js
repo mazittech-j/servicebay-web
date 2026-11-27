@@ -333,6 +333,30 @@ for (const form of enquiryForms) {
     }
   }
   area.value = (params.get('area') ?? '').slice(0, 80);
+  const detailsEl = fields.namedItem('details');
+  if (detailsEl && !fields.namedItem('slot')) {
+    const slotWrap = document.createElement('label');
+    slotWrap.textContent = 'Preferred time slot (optional)';
+    const slotSel = document.createElement('select');
+    slotSel.name = 'slot';
+    const visitParam = (params.get('visit') || '').trim().slice(0, 120);
+    const slotOpts = [
+      ['', 'Any available time'],
+      ...(visitParam ? [[visitParam, visitParam]] : []),
+      ['Morning (8:00 AM – 12:00 PM)', 'Morning (8:00 AM – 12:00 PM)'],
+      ['Afternoon (12:00 PM – 4:00 PM)', 'Afternoon (12:00 PM – 4:00 PM)'],
+      ['Evening (4:00 PM – 8:00 PM)', 'Evening (4:00 PM – 8:00 PM)']
+    ];
+    for (const [val, label] of slotOpts) {
+      const opt = document.createElement('option');
+      opt.value = val;
+      opt.textContent = label;
+      slotSel.append(opt);
+    }
+    if (visitParam) slotSel.value = visitParam;
+    slotWrap.append(slotSel);
+    detailsEl.closest('label')?.before(slotWrap);
+  }
   fields.namedItem('details').value = [params.get('estimate'), params.get('visit')]
     .filter(Boolean).join('\n').slice(0, 450);
 
@@ -368,6 +392,7 @@ for (const form of enquiryForms) {
       line('Property', 'property'),
       value('plan') ? 'Maintenance plan: ' + plan.selectedOptions[0].textContent : '',
       line('Visit schedule', 'schedule'),
+      line('Preferred slot', 'slot'),
       line('Billing frequency', 'billing'),
       'Country: ' + siteRegions[country.value].name,
       line('Area', 'area'),
@@ -380,7 +405,7 @@ for (const form of enquiryForms) {
       const group=form.querySelector('fieldset'),submit=form.querySelector('.form-submit');group.disabled=true;output.textContent='Sending your request…';
       try{
         if(!receipt)receipt='SB-'+Date.now().toString(36).toUpperCase()+'-'+crypto.randomUUID().replaceAll('-','').toUpperCase();
-        const res=await fetch('/api/portal/requests',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:receipt,name:value('name'),email:value('email'),phone:value('mobile'),service,serviceId:value('service'),planId:value('plan'),plan:value('plan')?plan.selectedOptions[0].textContent:'',area:value('area'),property:value('property'),country:siteRegions[country.value].name,details:value('details'),...siteAttribution,password:values.get('portalPassword')||'',_sb_hp:value('_sb_hp'),message})});
+        const res=await fetch('/api/portal/requests',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:receipt,name:value('name'),email:value('email'),phone:value('mobile'),service,serviceId:value('service'),planId:value('plan'),plan:value('plan')?plan.selectedOptions[0].textContent:'',area:value('area'),property:value('property'),country:siteRegions[country.value].name,details:value('details'),slot:value('slot')||(params.get('visit')||'').trim().slice(0,120),schedule:value('schedule'),...siteAttribution,password:values.get('portalPassword')||'',_sb_hp:value('_sb_hp'),message})});
         let r={};try{r=await res.json()}catch{}
         if(!res.ok)throw Error(r.error||'Could not submit the request ('+res.status+'). Please try again.');
         sent=true;submit.disabled=true;review.hidden=true;try{sessionStorage.setItem('servicebay-receipt',r.code)}catch{}

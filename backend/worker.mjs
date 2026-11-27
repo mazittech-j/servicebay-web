@@ -78,12 +78,12 @@ async function sync(env,store,key) {
   if(!base.canSync)fail('Add the ServiceHub API URL and integration key to enable delivery.',503);
   const r=entry.data,c=createServiceHubClient({baseUrl:creds.apiUrl,apiKey:creds.apiKey});
   const extId=r.external||r.receipt||key.replace(/[^A-Za-z0-9_.:-]/g,'-');
-  const attr=[r.source?'Source: '+r.source:'',r.medium?'Medium: '+r.medium:'',r.campaign?'Campaign: '+r.campaign:'',r.device?'Device: '+r.device:''].filter(Boolean).join(' | ');
+  const attr=[r.slot?'Slot: '+r.slot:'',r.schedule?'Schedule: '+r.schedule:'',r.source?'Source: '+r.source:'',r.medium?'Medium: '+r.medium:'',r.campaign?'Campaign: '+r.campaign:'',r.device?'Device: '+r.device:''].filter(Boolean).join(' | ');
   const baseMsg=r.message||'';
   const fullMsg=attr?(baseMsg?baseMsg+'\n\n['+attr+']':'['+attr+']'):baseMsg;
   let response;
   const corePayload={external_id:extId,name:r.name,email:r.email,phone:r.phone,message:fullMsg};
-  const fullPayload={...corePayload,source:r.source||'Direct',medium:r.medium||'',campaign:r.campaign||'',device:r.device||'',service:r.service||'',area:r.area||'',property:r.property||'',country:r.country||''};
+  const fullPayload={...corePayload,slot:r.slot||'',preferred_slot:r.slot||'',schedule:r.schedule||'',source:r.source||'Direct',medium:r.medium||'',campaign:r.campaign||'',device:r.device||'',service:r.service||'',area:r.area||'',property:r.property||'',country:r.country||''};
   try{
     try{response=await c.submit('enquiries',extId,fullPayload)}catch(e){
       if(e?.status===400||e?.status===422)response=await c.submit('enquiries',extId,corePayload);
@@ -99,6 +99,21 @@ async function sync(env,store,key) {
   for(let n=0;n<3;n++){const next=await store.get(key);if(next.data.erpId)return next;try{const upd={...next.data,erpId,erpSyncedStatus:next.data.status||'New'};delete upd.erpError;await store.save(key,upd,next.version,event('Quotes','Sent quote to ServiceHub',r.service||'Service quote'));return await store.get(key)}catch(e){if(e.status!==409)throw e}}
   fail('Reload and retry delivery.',409);
 }
+function extractErpCatalogItems(payload){
+  if(!payload||typeof payload!=='object')return null;
+  if(Array.isArray(payload))return payload;
+  const out=[];let found=false;
+  const addArr=(arr,kindHint)=>{if(Array.isArray(arr)){found=true;for(const x of arr)out.push(kindHint&&x&&typeof x==='object'&&!x.kind?{...x,kind:kindHint}:x)}};
+  addArr(payload.services);addArr(payload.pricing);addArr(payload.catalog);addArr(payload.items);addArr(payload.rates);
+  addArr(payload.plans,'plan');addArr(payload.amc_plans,'plan');addArr(payload.amcPlans,'plan');
+  if(payload.service&&typeof payload.service==='object'){found=true;out.push(payload.service)}
+  if(payload.plan&&typeof payload.plan==='object'){found=true;out.push({...payload.plan,kind:payload.plan.kind||'plan'})}
+  if(payload.data&&typeof payload.data==='object'){
+    const nested=extractErpCatalogItems(payload.data);
+    if(nested){found=true;out.push(...nested)}
+  }
+  return found?out:null;
+}
 async function pullErpPricing(env,store,client,{quiet=false,preloadedList=null}={}){
   const list=preloadedList!==null?preloadedList:await client.listServices();
   if(list===null)return {unsupported:true,updatedCount:0,total:0};
@@ -110,9 +125,12 @@ async function pullErpPricing(env,store,client,{quiet=false,preloadedList=null}=
   let updatedCount=0;
   for(const item of list){
     if(!item||typeof item!=='object')continue;
-    const name=txt(item.name||item.title||item.service_name||'',80);
-    const rate=Number(item.rate??item.price??item.unit_price??item.amount??0);
+    const name=txt(String(item.name||item.title||item.service_name||item.plan_name||item.label||item.display_name||item.service||''),80);
+    const rawRate=item.rate??item.price??item.unit_price??item.unitPrice??item.base_price??item.basePrice??item.annual_price??item.annualPrice??item.monthly_price??item.price_aed??item.rate_aed??item.amount??item.fee??item.cost??0;
+    const rate=typeof rawRate==='number'?rawRate:Number(String(rawRate).replace(/[^0-9.]/g,''));
     if(!Number.isFinite(rate)||rate<=0)continue;
+    const rawKind=String(item.kind||item.type||item.category||'').toLowerCase();
+    const isPlan=rawKind==='plan'||rawKind==='amc'||rawKind==='amc_plan'||rawKind==='subscription';
     const slug=item.slug?String(item.slug):'';
     const idKey=item.id?String(item.id):'';
     let matchKey=slug&&draft.pricing[slug]?slug:(idKey&&draft.pricing[idKey]?idKey:'');
@@ -130,7 +148,7 @@ async function pullErpPricing(env,store,client,{quiet=false,preloadedList=null}=
       }
     }else if(name){
       const newKey='custom-'+crypto.randomUUID().replaceAll('-','');
-      const entry={kind:item.kind==='plan'?'plan':'service',name,rate,description:txt(item.description||'',300),unit:txt(item.unit||'Units',30),sectors:Array.isArray(item.sectors)&&item.sectors.length?item.sectors:['residential','commercial','industrial']};
+      const entry={kind:isPlan?'plan':'service',name,rate,description:txt(String(item.description||''),300),unit:txt(String(item.unit||'Units'),30),sectors:Array.isArray(item.sectors)&&item.sectors.length?item.sectors:['residential','commercial','industrial']};
       draft.pricing[newKey]=entry;
       live.pricing[newKey]=structuredClone(entry);
       updatedCount++;
@@ -212,7 +230,7 @@ export async function serve(request,env,store,platform){
       let payload={};try{payload=await body(request,256000)}catch{payload={}}
       const eventName=txt(String(payload.event||payload.type||payload.action||'webhook'),60)||'webhook';
       let pricesUpdated=0,statusUpdated=0;
-      const rawList=Array.isArray(payload.services)?payload.services:Array.isArray(payload.pricing)?payload.pricing:Array.isArray(payload.catalog)?payload.catalog:Array.isArray(payload.items)?payload.items:Array.isArray(payload.data?.services)?payload.data.services:Array.isArray(payload.data)?payload.data:((payload.service||payload.plan)&&typeof (payload.service||payload.plan)==='object'?[payload.service||payload.plan]:null);
+      const rawList=extractErpCatalogItems(payload);
       if(rawList){
         const pr=await pullErpPricing(env,store,null,{quiet:false,preloadedList:rawList});
         pricesUpdated=pr.updatedCount;
@@ -557,7 +575,7 @@ export async function serve(request,env,store,platform){
         const service=txt(x.service||'Service quote',90),area=txt(x.area||'',80),created=new Date().toISOString();
         let inserted=false;
         if(!old.data){
-          const record={name,email:user.email,phone,message,service,area,property:txt(x.property||'',80),country:txt(x.country||'',80),details:txt(x.details||'',650),source:txt(x.source||'Direct',40)||'Direct',medium:txt(x.medium||'',40),campaign:txt(x.campaign||'',60),device:txt(x.device||'',20),landingPage:txt(x.landingPage||'',120),customerId:user.id,receipt:code,created,status:'Received',history:[{status:'Received',at:created}],serviceId:txt(x.serviceId||'',100),planId:txt(x.planId||'',100),plan:txt(x.plan||'',90),external:'sb-'+key.slice(-40),erpId:null};
+          const record={name,email:user.email,phone,message,service,area,property:txt(x.property||'',80),country:txt(x.country||'',80),details:txt(x.details||'',650),slot:txt(x.slot||'',120),schedule:txt(x.schedule||'',80),source:txt(x.source||'Direct',40)||'Direct',medium:txt(x.medium||'',40),campaign:txt(x.campaign||'',60),device:txt(x.device||'',20),landingPage:txt(x.landingPage||'',120),customerId:user.id,receipt:code,created,status:'Received',history:[{status:'Received',at:created}],serviceId:txt(x.serviceId||'',100),planId:txt(x.planId||'',100),plan:txt(x.plan||'',90),external:'sb-'+key.slice(-40),erpId:null};
           try{await store.save(key,record,0,event('Quotes','Received quote',service+' · '+(record.source||'Direct'),'Customer portal'));inserted=true}catch(e){if(e.status!==409)throw e;old=await store.get(key)}
         }
         if(!inserted&&(old.data?.customerId||'')!==(user.id||''))fail('Use the original account or start a new quote.',409);

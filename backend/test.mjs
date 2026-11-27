@@ -434,6 +434,27 @@ test('Traffic source & device attribution tracks visits, compares platforms in a
     assert.equal(whQuote.data.status,'Completed');
     const whSet=await store.get('settings');
     assert.equal(Object.values(whSet.data.live.pricing).find(x=>x.name==='AC maintenance')?.rate,550);
+
+    // catalog.sync webhook with nested services + amc_plans and string prices updates both Services & AMC
+    const catWh=await worker.fetch(new Request(origin+'/api/erp/webhook?token='+autoOn.webhookSecret,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({event:'catalog.sync',data:{services:[{name:'Plumbing',price_aed:'AED 275'}],amc_plans:[{plan_name:'Silver AMC',annual_price:1450}]}})}),erpCfg);
+    assert.equal(catWh.status,200);
+    const catJson=await catWh.json();
+    assert.equal(catJson.pricesUpdated,2);
+    const catSet=await store.get('settings');
+    assert.equal(Object.values(catSet.data.live.pricing).find(x=>x.name==='Plumbing')?.rate,275);
+    assert.equal(Object.values(catSet.data.live.pricing).find(x=>x.name==='Silver AMC')?.kind,'plan');
+    assert.equal(Object.values(catSet.data.live.pricing).find(x=>x.name==='Silver AMC')?.rate,1450);
+
+    // Slot option is stored and sent to ERP inside message
+    let sentBody=null;
+    globalThis.fetch=async(url,opts)=>{
+      if(String(url).includes('/enquiries')){sentBody=JSON.parse(opts.body);return new Response(JSON.stringify({id:999}),{status:201,headers:{'Content-Type':'application/json'}})}
+      return new Response('Not found',{status:404});
+    };
+    const slotKey=await store.save('request/slot-1',{external:'slot-1',name:'Slot User',email:'slot@example.com',phone:'+971500000022',message:'Need visit',slot:'Morning (8:00 AM – 12:00 PM)',source:'Direct',status:'Received'},0);
+    assert.ok(slotKey);
+    await (await call('/api/admin/erp',{admin:true,config:erpCfg,post:{action:'sync-all'}})).json();
+    assert.match(sentBody.message,/Slot: Morning \(8:00 AM – 12:00 PM\)/);
   }finally{globalThis.fetch=original}
 });
 
