@@ -3,8 +3,8 @@
   async function api(path,data){const res=await fetch(path,data?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}:{});const v=await res.json();if(!res.ok)throw Error(v.error||'Please try again.');return v}
   const auth=document.querySelector('#customer-auth'),list=document.querySelector('#my-requests'),track=document.querySelector('#track');
   const code=track.elements.code;
-  try{code.value=sessionStorage.getItem('servicebay-receipt')||''}catch{}
   const params=new URLSearchParams(location.search);
+  try{code.value=params.get('code')||sessionStorage.getItem('servicebay-receipt')||''}catch{}
   if(auth){
     const forgotForm=document.querySelector('#cust-forgot'),resetForm=document.querySelector('#cust-reset'),forgotBtn=document.querySelector('#cust-forgot-btn');
     const hashParams=new URLSearchParams(location.hash.slice(1)),resetToken=hashParams.get('reset')||'';
@@ -49,5 +49,6 @@
   if(list)load().catch(e=>list.textContent=e.message);
   async function receipt(action){const out=track.querySelector('.result');try{const r=await api('/api/portal/'+action,{code:code.value.trim()});if(action==='claim'){out.textContent='Request added to your account.';await load()}else out.textContent='Status: '+r.status+' · '+new Date(r.created).toLocaleDateString()+(r.reference?' · '+r.reference:'')}catch(err){out.textContent=err.message}}
   track.onsubmit=e=>{e.preventDefault();receipt('track')};const claim=document.querySelector('#claim');if(claim)claim.onclick=()=>{if(track.reportValidity())receipt('claim')};
+  if(params.get('code')&&code.value.trim())receipt('track');
   const signout=document.querySelector('#customer-logout');if(signout)signout.onclick=async()=>{try{await api('/api/customer-auth/logout',{});try{sessionStorage.removeItem('servicebay-receipt')}catch{}location.replace('/portal/')}catch(e){track.querySelector('.result').textContent=e.message}};
 })();

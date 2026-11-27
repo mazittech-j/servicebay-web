@@ -410,7 +410,7 @@ for (const form of enquiryForms) {
         let r={};try{r=await res.json()}catch{}
         if(!res.ok)throw Error(r.error||'Could not submit the request ('+res.status+'). Please try again.');
         sent=true;submit.disabled=true;review.hidden=true;try{sessionStorage.setItem('servicebay-receipt',r.code)}catch{}
-        const a=document.createElement('a');a.href='/portal/';a.textContent='Track in customer portal';
+        const a=document.createElement('a');a.href='/portal/?code='+encodeURIComponent(r.code);a.textContent='Track in customer portal';
         if(fields.portalPassword)fields.portalPassword.value='';
         output.replaceChildren('Quote request received! '+(r.emailStatus==='Accepted'?'Your receipt has been emailed to '+value('email')+'. ':'Save this receipt code to track your request: ')+'Receipt: '+r.code+' · ',a);
         for(const other of enquiryForms){if(other.elements.portalPassword){other.elements.portalPassword.value='';other.elements.portalPassword.disabled=true}const pwW=other.querySelector('[data-quote-password]');if(pwW)pwW.hidden=true;other.elements.email.value=value('email');other.elements.email.readOnly=true;const link=document.createElement('a');link.href='/portal/';link.textContent='Track receipt';other.querySelector('[data-account-note]').replaceChildren(link)}
@@ -528,7 +528,8 @@ for (const cForm of document.querySelectorAll('form[data-complaint-form]')) {
       let d = {}; try { d = await res.json(); } catch {}
       if (!res.ok) throw Error(d.error || 'Could not submit complaint.');
       cForm.reset();
-      const link = document.createElement('a'); link.href = '/portal/'; link.textContent = 'Track in customer portal';
+      try { sessionStorage.setItem('servicebay-receipt', d.reference); } catch {}
+      const link = document.createElement('a'); link.href = '/portal/?code=' + encodeURIComponent(d.reference); link.textContent = 'Track in customer portal';
       out.replaceChildren('Complaint logged with Customer Helpdesk. Reference: ' + d.reference + (d.erpId ? ' (Helpdesk #' + d.erpId + ')' : '') + (d.emailStatus === 'Accepted' ? ' — confirmation emailed. ' : ' — save this code to track status: '), link);
     } catch (err) {
       out.textContent = err.message || 'Could not submit complaint. Try again.';
