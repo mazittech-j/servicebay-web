@@ -225,19 +225,43 @@
     const bar=el('div',undefined,'section-head');bar.append(el('h2',title));if(action)bar.append(button(action,go));parent.append(bar);
   }
   function activityRows(parent,rows){
-    if(!rows.length){parent.append(el('p','New activity will appear here as changes are made.','empty-state'));return}
+    if(!rows.length){parent.append(el('p','No matching activity events found.','empty-state'));return}
     const feed=el('ol',undefined,'audit-feed');parent.append(feed);
-    for(const r of rows){const li=el('li'),info=el('div'),line=el('div',undefined,'audit-title');line.append(el('strong',r.action),el('span',r.group,'group-tag'));info.append(line);if(r.detail)info.append(el('p',r.detail));info.append(el('small',r.actor));const time=el('time',stamp(r.at));time.dateTime=r.at;li.append(info,time);feed.append(li)}
+    for(const r of rows){const li=el('li'),info=el('div'),line=el('div',undefined,'audit-title'),tag=el('span',r.group,'group-tag');tag.dataset.group=r.group;line.append(el('strong',r.action),tag);info.append(line);if(r.detail)info.append(el('p',r.detail));info.append(el('small',r.actor||'System'));const time=el('time',stamp(r.at));time.dateTime=r.at;li.append(info,time);feed.append(li)}
   }
   async function activityLog(ticket){
-    const c=card(panel),bar=el('div',undefined,'section-head');c.append(bar);bar.append(el('h2','Recorded activity'));
-    const group=field(bar,'Filter activity','All events','text',['All events','Quotes','Website','Team','Email','Studio','Security']);group.oninput=e=>e.stopPropagation();
-    const list=el('div'),foot=el('div');c.append(el('p','New events are recorded in Dubai time.','hint'),list,foot);let seq=0;
+    const c=card(panel);
+    const head=el('div',undefined,'section-head');head.append(el('h2','Recorded activity'),el('span','Dubai time (GST)','group-tag'));c.append(head);
+    const tools=el('div',undefined,'desk-tools');c.append(tools);
+    const search=field(tools,'Search activity','','search');search.placeholder='Filter by action, detail or user';search.oninput=e=>e.stopPropagation();
+    const group=field(tools,'Category','All events','text',['All events','Quotes','Website','Team','Email','Studio','Security']);group.oninput=e=>e.stopPropagation();
+    const actBtns=el('div',undefined,'buttons');actBtns.style.margin='0';
+    let allItems=[],seq=0,nextCursor='';
+    const list=el('div'),foot=el('div');c.append(list,foot);
+    function drawFiltered(){
+      list.replaceChildren();
+      const q=search.value.trim().toLowerCase();
+      const filtered=q?allItems.filter(r=>(r.action+' '+(r.detail||'')+' '+(r.actor||'')+' '+(r.group||'')).toLowerCase().includes(q)):allItems;
+      activityRows(list,filtered);
+    }
+    actBtns.append(
+      button('Refresh',()=>load(),'secondary'),
+      button('Export CSV',()=>{
+        const escCsv=v=>'"'+String(v??'').replace(/"/g,'""')+'"';
+        const csv=[['Time','Group','Action','Detail','Actor'].join(','),...allItems.map(r=>[r.at,r.group,r.action,r.detail||'',r.actor||''].map(escCsv).join(','))].join('\n');
+        const url=URL.createObjectURL(new Blob([csv],{type:'text/csv'})),a=el('a');a.href=url;a.download='servicebay-activity.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),10000);
+      },'secondary')
+    );
+    tools.append(actBtns);
     async function load(cursor=''){
       const order=++seq,v=await api('activity?'+new URLSearchParams({group:group.value==='All events'?'':group.value,...(cursor?{cursor}:{})}));
       if(ticket!==epoch||order!==seq)return;
-      if(!cursor)list.replaceChildren();activityRows(list,v.items);foot.replaceChildren();if(v.next)buttons(foot,button('Load earlier events',()=>load(v.next)));
+      allItems=cursor?allItems.concat(v.items):v.items;
+      nextCursor=v.next||'';
+      drawFiltered();
+      foot.replaceChildren();if(nextCursor)buttons(foot,button('Load earlier events',()=>load(nextCursor)));
     }
+    search.addEventListener('input',drawFiltered);
     group.onchange=()=>load().catch(e=>notice.textContent=e.message);await load();
   }
   async function serviceDashboard(ticket){
@@ -632,14 +656,14 @@
     function render(){
       list.replaceChildren();
       if(!items.length)list.append(el('p','No matching requests.','empty-state'));
-      for(const row of items){const b=el('button',undefined,'case-choice'),top=el('span',undefined,'case-line'),bottom=el('span',undefined,'case-line');b.type='button';b.setAttribute('aria-pressed',String(row.key===selected));top.append(el('strong',row.name),stageBadge(row.status));bottom.append(el('span',(row.service||'Service quote')+' · '+(row.source||'Direct')),el('small',new Date(row.created).toLocaleDateString()));b.append(top,bottom);b.onclick=()=>{selected=row.key;render();if(matchMedia('(max-width:780px)').matches)detail.scrollIntoView({block:'start'})};list.append(b)}
+      for(const row of items){const b=el('button',undefined,'case-choice'),top=el('span',undefined,'case-line'),bottom=el('span',undefined,'case-line'),badges=el('span');badges.style.cssText='display:inline-flex;gap:5px;align-items:center';if(row.kind==='complaint'){const cmp=el('span','Complaint','group-tag');cmp.dataset.group='Security';badges.append(cmp)}badges.append(stageBadge(row.status));b.type='button';b.setAttribute('aria-pressed',String(row.key===selected));top.append(el('strong',row.name),badges);bottom.append(el('span',(row.service||'Service quote')+' · '+(row.source||'Direct')),el('small',new Date(row.created).toLocaleDateString()));b.append(top,bottom);b.onclick=()=>{selected=row.key;render();if(matchMedia('(max-width:780px)').matches)detail.scrollIntoView({block:'start'})};list.append(b)}
       if(cursor)list.append(button('Load more requests',()=>refresh(true)));
       detail.replaceChildren();
       const row=items.find(v=>v.key===selected);if(!row){detail.append(el('h2','Request details'),el('p','Select a request to view its details.'));return}
       const head=el('div',undefined,'section-head');head.append(el('h2',row.service||'Service quote'),stageBadge(row.status));detail.append(head,el('p',row.name,'case-client'));
       const erpText=row.erpId?('Delivered (#'+row.erpId+')'):(row.erpError?('Sync failed: '+row.erpError):'Stored on website');
       const srcText=[row.source||'Direct',row.medium,row.campaign,row.device].filter(Boolean).join(' · ');
-      facts(detail,[['Email',row.email],['Phone',row.phone],['Source',srcText],['Preferred slot',row.slot],['Schedule',row.schedule],['Area',row.area],['Property',row.property],['Country',row.country],['Received',new Date(row.created).toLocaleString()],['Receipt email',row.emailState],['ServiceHub',erpText]]);
+      facts(detail,[['Reference',row.receipt],['Email',row.email],['Phone',row.phone],['Source',srcText],['Preferred slot',row.slot],['Schedule',row.schedule],['Area',row.area],['Property',row.property],['Country',row.country],['Received',new Date(row.created).toLocaleString()],['Receipt email',row.emailState],['ServiceHub',erpText]]);
       if(row.photo){const pWrap=el('div');const pLink=el('a','View uploaded photo');pLink.href=row.photo;pLink.target='_blank';pLink.rel='noopener';const img=document.createElement('img');img.src=row.photo;img.alt='Customer uploaded photo';img.style.cssText='display:block;max-width:260px;max-height:180px;border-radius:8px;margin:.45rem 0';pWrap.append(pLink,img);detail.append(pWrap)}
       if(row.details||row.message){const text=el('details'),s=el('summary','Request description');text.append(s,el('p',row.details||row.message,'preserve-lines'));text.open=true;detail.append(text)}
       const state=field(detail,'Request status',row.status,'text',stages);state.oninput=e=>e.stopPropagation();

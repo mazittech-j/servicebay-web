@@ -34,3 +34,8 @@ input:focus,select:focus,textarea:focus{outline:none;border-color:var(--sb-accen
 .btn:hover:not(:disabled){filter:brightness(1.06)}
 .btn:active:not(:disabled){transform:translateY(1px)}
 .identity{background:var(--sb-bg);padding:4px 10px;border-radius:999px;border:1px solid var(--sb-line);font-weight:600}
+.group-tag[data-group="Security"]{background:#fdecec;border-color:#f5c2c2;color:#8c1d18}
+.group-tag[data-group="Quotes"]{background:#e7f3f5;border-color:#bfd9df;color:#1e525f}
+.group-tag[data-group="Website"]{background:#eef0fb;border-color:#cbd1f2;color:#343f82}
+.group-tag[data-group="Team"]{background:#f4ecfa;border-color:#dec5f0;color:#5a2d82}
+.group-tag[data-group="Email"]{background:#eaf6ee;border-color:#bfe3cb;color:#1e5e38}
