@@ -66,8 +66,8 @@ button:not(:disabled) { cursor: pointer; }
 .form-intro { margin-top: .47rem; color: var(--muted); font-size: .95rem; }
 form { margin-top: 1.22rem; }
 fieldset { min-width: 0; margin: 0; border: 0; padding: 0; }
-.fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .78rem .72rem; }
-.field-wide { grid-column: 1 / -1; }
+.fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: end; gap: .78rem .72rem; }
+.field-wide { grid-column: 1 / -1; align-self: stretch; }
 label { min-width: 0; font-size: .87rem; font-weight: 740; }
 label > span:only-of-type { color: var(--accent); }
 label > small { margin-left: .28rem; color: var(--muted); font-size: .79rem; font-weight: 500; }
