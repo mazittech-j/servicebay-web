@@ -9,7 +9,9 @@ async function cipher(env){
   return crypto.subtle.importKey('raw',await crypto.subtle.digest('SHA-256',encoder.encode(raw)),'AES-GCM',false,['encrypt','decrypt']);
 }
 async function settings(db,env,withKey=false){
-  const saved=(await db.get('security/mail')).data,from=saved?.from||env.RECEIPT_FROM_EMAIL||'';
+  const saved=(await db.get('security/mail')).data;
+  if(saved?.deleted)return {from:'',provider:saved.provider||'brevo',configured:false,editable:true,...(withKey?{key:''}:{})};
+  const from=saved?.from||env.RECEIPT_FROM_EMAIL||'';
   let key=env.BREVO_API_KEY||env.RESEND_API_KEY||'';
   if(saved?.secret&&withKey)key=new TextDecoder().decode(await crypto.subtle.decrypt({name:'AES-GCM',iv:decode(saved.iv)},await cipher(env),decode(saved.secret)));
   const provider=saved?.provider||(env.BREVO_API_KEY&&!saved?.secret?'brevo':'resend');
@@ -17,25 +19,30 @@ async function settings(db,env,withKey=false){
 }
 export async function mailSettings(db,env,input){
   if(input){
+    const row=await db.get('security/mail');
+    if(input.action==='delete'){
+      await db.save('security/mail',{deleted:true,provider:'brevo'},row.version,event('Email','Deleted receipt sender settings'));
+      const tRow=await db.get('security/mail-test');if(tRow.data)await db.save('security/mail-test',null,tRow.version);
+      return await mailSettings(db,env,null);
+    }
     const from=String(input.from||'').trim(),key=String(input.key||'').trim();
     if(from.length>150||!/^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/.test(from))reject('Enter a valid sender email address.');
-    const row=await db.get('security/mail');
     let provider=key.startsWith('xkeysib-')?'brevo':key.startsWith('re_')?'resend':(input.provider==='brevo'?'brevo':input.provider==='resend'?'resend':(row.data?.provider||'resend'));
-    let value={...row.data,from,provider};
+    let value={...row.data,from,provider,deleted:false};
     if(key){
-      const validBrevo=/^xkeysib-[A-Za-z0-9_.-]{16,220}$/.test(key);
+      const validBrevo=/^xkeysib-\S{16,300}$/.test(key);
       const validResend=/^re_[A-Za-z0-9_-]{10,160}$/.test(key);
       if(!validBrevo&&!validResend)reject('Enter a valid Brevo (xkeysib-…) or Resend (re_…) API key.');
       provider=validBrevo?'brevo':'resend';
       const iv=crypto.getRandomValues(new Uint8Array(12));
-      value={from,provider,iv:encode(iv),secret:encode(await crypto.subtle.encrypt({name:'AES-GCM',iv},await cipher(env),encoder.encode(key)))};
+      value={from,provider,deleted:false,iv:encode(iv),secret:encode(await crypto.subtle.encrypt({name:'AES-GCM',iv},await cipher(env),encoder.encode(key)))};
     }else if(!value.secret&&!env.RESEND_API_KEY&&!env.BREVO_API_KEY)reject('Add a sending API key.');
     await db.save('security/mail',value,row.version,event('Email','Saved receipt sender settings',provider));
   }
   const config=await settings(db,env);
   const row=await db.get('security/mail'),test=(await db.get('security/mail-test')).data;
   const fallbackRecipient=await resolveOwnerEmail(db,env);
-  return {...config,fallbackRecipient,envStatus:{hasResendKey:!!(row.data?.secret||env.RESEND_API_KEY||env.BREVO_API_KEY),hasFromEmail:!!config.from,hasMailKey:!!env.MAIL_SETTINGS_KEY},lastTest:test?.revision===row.version&&test.from===config.from?{status:test.status,at:test.at}:null};
+  return {...config,fallbackRecipient,envStatus:{hasResendKey:!!(!row.data?.deleted&&(row.data?.secret||env.RESEND_API_KEY||env.BREVO_API_KEY)),hasFromEmail:!!config.from,hasMailKey:!!env.MAIL_SETTINGS_KEY},lastTest:test?.revision===row.version&&test.from===config.from?{status:test.status,at:test.at}:null};
 }
 async function mutate(db,key,transform,activity){
   for(let i=0;i<5;i++){
