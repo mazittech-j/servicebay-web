@@ -3,20 +3,34 @@ import {catalog,addCustomToPage} from './catalog.mjs';
 import {pricing} from './generated.mjs';
 import {parseHTML} from 'linkedom';
 export const EMPTY_PAGE={title:'',description:'',changes:{},sections:[],hidden:[]};
-export const defaults={pricing,typography:{},social:[],menu:[],currencies:[],name:'ServiceBay',logo:'/assets/servicebay-wordmark.webp',hours:'Mon–Sat, 8:00 AM–6:00 PM',phone:'+971562014647',whatsapp:'971562014647',email:'maz.ittech@gmail.com',address:'Office 410, Opal Tower, Business Bay, Dubai, United Arab Emirates',font:'Site default',size:16,color:'#ac3212',paper:'#f9f8f5',ink:'#191917',dark:'#211f1c',tint:'#f0ede6',muted:'#55534e',line:'#dedbd4',ga:'',ads:'',pixel:'',tiktok:'',gtm:'',verification:''};
+export const defaults={pricing,typography:{},social:[],menu:[],currencies:[],banners:[],aboutPhotos:[],clientLogos:[],serviceAreas:[],visitSchedules:[],googleReviews:{enabled:true,profileUrl:'',placeId:'',apiKey:'',items:[]},name:'ServiceBay',logo:'/assets/servicebay-wordmark.webp',favicon:'/assets/servicebay-favicon.png',hours:'Mon–Sat, 8:00 AM–6:00 PM',phone:'+971562014647',whatsapp:'971562014647',email:'maz.ittech@gmail.com',address:'Office 410, Opal Tower, Business Bay, Dubai, United Arab Emirates',font:'Site default',size:16,color:'#ac3212',paper:'#f9f8f5',ink:'#191917',dark:'#211f1c',tint:'#f0ede6',muted:'#55534e',line:'#dedbd4',ga:'',ads:'',pixel:'',tiktok:'',gtm:'',verification:''};
 export const fonts=['Site default','Segoe UI','Arial','Georgia','Verdana','Tahoma'];
 export const fail=(message,status=400)=>{throw Object.assign(new Error(message),{status})};
 export function txt(value,max=3000){if(typeof value!=='string'||value.length>max)fail('Check field length.');return value.trim()}
 export function imageUrl(s){s=txt(s,1500);if(!/^\/(assets|media)\/[\w./-]+$/.test(s)&&!/^https:\/\/[^\s"<>\\]+$/i.test(s))fail('Use a site image or an HTTPS image URL.');return s}
 export function cleanSettings(x){
   const out={};
-  for(const k of Object.keys(defaults).filter(k=>!['pricing','typography','social','menu','currencies'].includes(k))) out[k]=k==='size'?Number(x[k]??defaults.size):txt(x[k]??defaults[k],k==='logo'?1500:k==='address'?300:120);
+  for(const k of Object.keys(defaults).filter(k=>!['pricing','typography','social','menu','currencies','banners','aboutPhotos','clientLogos','serviceAreas','visitSchedules','googleReviews'].includes(k))) out[k]=k==='size'?Number(x[k]??defaults.size):txt(x[k]??defaults[k],(k==='logo'||k==='favicon')?1500:k==='address'?300:120);
   out.typography=cleanTypography(x.typography,fail);
   out.pricing=catalog(x.pricing||pricing,pricing,fail);
   out.social=Array.isArray(x.social)?x.social.slice(0,15).map(s=>({label:txt(String(s?.label||''),40),url:txt(String(s?.url||''),300)})).filter(s=>s.label&&/^https:\/\//i.test(s.url)):[];
   out.menu=Array.isArray(x.menu)?x.menu.slice(0,20).map(m=>({label:txt(String(m?.label||''),40),href:txt(String(m?.href||''),200),enabled:m?.enabled!==false})).filter(m=>m.label&&(/^\/[^\s"<>\\]*$/.test(m.href)||/^https:\/\//i.test(m.href))):[];
   out.currencies=Array.isArray(x.currencies)?x.currencies.slice(0,20).map(c=>({code:txt(String(c?.code||''),8).toUpperCase(),name:txt(String(c?.name||''),40),currency:txt(String(c?.currency||''),8).toUpperCase(),rate:Number(c?.rate||0)})).filter(c=>/^[A-Z0-9]{2,6}$/.test(c.code)&&c.name&&/^[A-Z]{3}$/.test(c.currency)&&Number.isFinite(c.rate)&&c.rate>0):[];
+  out.banners=Array.isArray(x.banners)?x.banners.slice(0,8).map(b=>({image:b?.image?imageUrl(String(b.image)):'',label:txt(String(b?.label||''),60),kicker:txt(String(b?.kicker||''),80),title:txt(String(b?.title||''),140),description:txt(String(b?.description||''),300),position:txt(String(b?.position||'center'),40)||'center'})).filter(b=>b.image):[];
+  out.aboutPhotos=Array.isArray(x.aboutPhotos)?x.aboutPhotos.slice(0,3).map(p=>({src:p?.src?imageUrl(String(p.src)):'',alt:txt(String(p?.alt||''),200)})).filter(p=>p.src):[];
+  out.clientLogos=Array.isArray(x.clientLogos)?x.clientLogos.slice(0,25).map(l=>({name:txt(String(l?.name||''),80),image:l?.image?imageUrl(String(l.image)):'',dark:Boolean(l?.dark)})).filter(l=>l.name&&l.image):[];
+  out.serviceAreas=Array.isArray(x.serviceAreas)?[...new Set(x.serviceAreas.slice(0,80).map(a=>txt(String(a||''),80)).filter(Boolean))]:[];
+  out.visitSchedules=Array.isArray(x.visitSchedules)?x.visitSchedules.slice(0,12).map(v=>({id:txt(String(v?.id||v?.label||''),40).toLowerCase().replace(/[^a-z0-9-]+/g,'-')||'custom',label:txt(String(v?.label||''),60),count:Math.max(1,Math.min(365,Number(v?.count||1)))})).filter(v=>v.label):[];
+  const gr=x.googleReviews&&typeof x.googleReviews==='object'?x.googleReviews:{};
+  out.googleReviews={
+    enabled:gr.enabled!==false,
+    profileUrl:gr.profileUrl&&/^https:\/\//i.test(String(gr.profileUrl).trim())?txt(String(gr.profileUrl),500):'',
+    placeId:txt(String(gr.placeId||''),120),
+    apiKey:txt(String(gr.apiKey||''),120),
+    items:Array.isArray(gr.items)?gr.items.slice(0,20).map(r=>({author:txt(String(r?.author||''),80),rating:Math.max(1,Math.min(5,Math.round(Number(r?.rating||5)))),text:txt(String(r?.text||''),600),time:txt(String(r?.time||''),40)})).filter(r=>r.author&&r.text):[]
+  };
   out.logo=imageUrl(out.logo);
+  out.favicon=imageUrl(out.favicon||defaults.favicon);
   if(!out.name||!out.address||!/^(\+)[1-9]\d{6,14}$/.test(out.phone)||!/^[1-9]\d{6,14}$/.test(out.whatsapp)||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(out.email))fail('Check company name, address, email and international numbers.');
   if(!fonts.includes(out.font)||!Number.isInteger(out.size)||out.size<14||out.size>24||![out.color,out.paper,out.ink,out.dark,out.tint,out.muted,out.line].every(v=>/^#[a-f\d]{6}$/i.test(v)))fail('Check your theme settings.');
   for(const [key,re] of [['ga',/^G-[A-Z0-9]+$/],['ads',/^AW-\d+$/],['pixel',/^\d{6,25}$/],['tiktok',/^[A-Z0-9]{10,30}$/],['gtm',/^GTM-[A-Z0-9]+$/],['verification',/^[\w-]+$/]])if(out[key]&&!re.test(out[key]))fail('Invalid '+key+' ID.');
@@ -123,9 +137,134 @@ export function renderPage(html,settings,page,editing=false){
     }
     meta(d,'sb-currencies',JSON.stringify(s.currencies));
   }
+  if(s.favicon&&s.favicon!==defaults.favicon){for(const iconEl of d.querySelectorAll('link[rel="icon"],.servicebay-mark')){iconEl.setAttribute(iconEl.localName==='link'?'href':'src',s.favicon)}}
+  if(Array.isArray(s.banners)&&s.banners.length){
+    const bannerEl=d.querySelector('.home-banner');
+    if(bannerEl){
+      const media=bannerEl.querySelector('.banner-media'),sel=bannerEl.querySelector('.banner-selector');
+      if(media){
+        media.replaceChildren();
+        s.banners.forEach((b,idx)=>{
+          const slide=d.createElement('div');slide.className='banner-slide';slide.setAttribute('data-banner-slide','');slide.setAttribute('data-label',b.label||('Banner '+(idx+1)));slide.setAttribute('style','--banner-position:'+(b.position||'center'));if(idx>0)slide.setAttribute('hidden','');
+          const img=d.createElement('img');img.setAttribute('src',b.image);img.setAttribute('width','1400');img.setAttribute('height','933');img.setAttribute('alt','');if(idx===0)img.setAttribute('fetchpriority','high');else img.setAttribute('loading','lazy');
+          slide.append(img);media.append(slide);
+        });
+      }
+      if(sel){
+        const autoBtn=sel.querySelector('[data-banner-auto]');
+        for(const b of [...sel.querySelectorAll('[data-banner-index]')])b.remove();
+        s.banners.forEach((b,idx)=>{
+          const btn=d.createElement('button');btn.setAttribute('type','button');btn.setAttribute('data-banner-index',String(idx));
+          btn.setAttribute('data-copy',JSON.stringify({image:b.image,label:b.label||('Banner '+(idx+1)),kicker:b.kicker,title:b.title,description:b.description,position:b.position||'center'}));
+          btn.setAttribute('title',b.label||('Banner '+(idx+1)));btn.setAttribute('aria-label',b.label||('Banner '+(idx+1)));if(idx===0)btn.setAttribute('aria-current','true');
+          const thumb=d.createElement('img');thumb.setAttribute('src',b.image);thumb.setAttribute('width','46');thumb.setAttribute('height','32');thumb.setAttribute('alt','');
+          btn.append(thumb);if(autoBtn)sel.insertBefore(btn,autoBtn);else sel.append(btn);
+        });
+      }
+      const first=s.banners[0];
+      const kicker=bannerEl.querySelector('[data-banner-kicker]'),h1=bannerEl.querySelector('#home-title'),desc=bannerEl.querySelector('[data-banner-description]');
+      if(kicker&&first.kicker)kicker.textContent=first.kicker;
+      if(h1&&first.title)h1.textContent=first.title;
+      if(desc&&first.description)desc.textContent=first.description;
+    }
+  }
+  if(Array.isArray(s.aboutPhotos)&&s.aboutPhotos.length){
+    const aboutHero=d.querySelector('.about-cover-photo');
+    if(aboutHero){
+      if(s.aboutPhotos.length===1){
+        aboutHero.setAttribute('src',s.aboutPhotos[0].src);aboutHero.setAttribute('alt',s.aboutPhotos[0].alt||'ServiceBay team');aboutHero.removeAttribute('srcset');
+      }else{
+        const gallery=d.createElement('div');gallery.className='about-cover-photo about-photo-grid about-photo-count-'+s.aboutPhotos.length;
+        s.aboutPhotos.forEach((ph,idx)=>{
+          const img=d.createElement('img');img.setAttribute('src',ph.src);img.setAttribute('alt',ph.alt||('About photo '+(idx+1)));img.setAttribute('loading',idx===0?'eager':'lazy');
+          gallery.append(img);
+        });
+        aboutHero.replaceWith(gallery);
+      }
+    }
+  }
+  if(Array.isArray(s.clientLogos)&&s.clientLogos.length){
+    const track=d.querySelector('.client-logos .logo-track');
+    if(track){
+      track.replaceChildren();
+      [false,true].forEach(dup=>{
+        const ul=d.createElement('ul');ul.className='logo-group';if(dup)ul.setAttribute('aria-hidden','true');
+        for(const item of s.clientLogos){
+          const li=d.createElement('li');if(item.dark)li.className='dark-logo';
+          const img=d.createElement('img');img.setAttribute('src',item.image);img.setAttribute('alt',dup?'':item.name);img.setAttribute('width','150');img.setAttribute('height','56');img.setAttribute('loading','lazy');
+          li.append(img);ul.append(li);
+        }
+        track.append(ul);
+      });
+    }
+  }
+  if(Array.isArray(s.serviceAreas)&&s.serviceAreas.length){
+    for(const sel of d.querySelectorAll('#availability select[name="area"]')){
+      const first=sel.querySelector('option[disabled]');
+      sel.replaceChildren();
+      if(first)sel.append(first);
+      for(const area of s.serviceAreas){const opt=d.createElement('option');opt.textContent=area;sel.append(opt)}
+    }
+    let am=d.querySelector('meta[name="sb-areas"]');if(!am){am=d.createElement('meta');am.setAttribute('name','sb-areas');d.head.append(am)}
+    am.setAttribute('content',JSON.stringify(s.serviceAreas));
+  }
+  if(Array.isArray(s.visitSchedules)&&s.visitSchedules.length){
+    for(const grid of d.querySelectorAll('.amc-calendar .frequency-grid')){
+      grid.replaceChildren();
+      for(const f of s.visitSchedules){
+        const a=d.createElement('a');a.setAttribute('href','/amc/?schedule='+encodeURIComponent(f.id)+'#plan-builder');
+        const sp=d.createElement('span');sp.textContent=f.label;
+        const sm=d.createElement('small');sm.textContent=f.count+' '+(f.count===1?'visit':'visits')+' per year';
+        a.append(sp,sm);grid.append(a);
+      }
+    }
+    for(const sel of d.querySelectorAll('select[name="schedule"],select[name="amc-visits"]')){
+      const first=sel.querySelector('option[value=""]');
+      sel.replaceChildren();if(first)sel.append(first);
+      for(const f of s.visitSchedules){const opt=d.createElement('option');opt.setAttribute('value',f.id);opt.textContent=f.label+' ('+f.count+(f.count===1?' visit/year':' visits/year')+')';sel.append(opt)}
+    }
+  }
+  const gr=s.googleReviews;
+  if(gr){
+    if(gr.enabled===false){for(const sec of d.querySelectorAll('.home-reviews'))sec.remove()}
+    else if((gr.items&&gr.items.length)||(gr.placeId&&gr.apiKey)||gr.profileUrl){
+      let sec=d.querySelector('.home-reviews');
+      if(!sec&&d.querySelector('.home-banner')){
+        sec=d.createElement('section');sec.className='section home-reviews';sec.setAttribute('aria-labelledby','review-title');
+        const anchor=d.querySelector('.contact-strip')||d.querySelector('footer');
+        if(anchor&&anchor.parentNode===main)main.insertBefore(sec,anchor);else main.append(sec);
+      }
+      if(sec){
+        sec.removeAttribute('hidden');
+        const wrap=d.createElement('div');wrap.className='wrap reviews-layout';
+        const head=d.createElement('div');head.className='reviews-heading';
+        const sh=d.createElement('div');sh.className='section-heading';
+        const ey=d.createElement('p');ey.className='eyebrow';ey.textContent='Customer reviews';
+        const h2=d.createElement('h2');h2.id='review-title';h2.textContent='Reviews on Google';
+        sh.append(ey,h2);head.append(sh);
+        if(gr.profileUrl){const lnk=d.createElement('a');lnk.className='inline-link';lnk.setAttribute('href',gr.profileUrl);lnk.setAttribute('target','_blank');lnk.setAttribute('rel','noopener noreferrer');lnk.textContent='Read reviews on Google Maps';head.append(lnk)}
+        wrap.append(head);
+        const car=d.createElement('div');car.className='review-carousel';
+        if(gr.placeId&&gr.apiKey){car.setAttribute('data-reviews-key',gr.apiKey);car.setAttribute('data-place-id',gr.placeId)}
+        const win=d.createElement('div');win.className='review-window';
+        const track=d.createElement('div');track.className='review-track';
+        if(gr.items&&gr.items.length){
+          for(const rv of gr.items){
+            const art=d.createElement('article');art.className='review-card';
+            const stars=d.createElement('p');stars.className='review-stars';stars.setAttribute('aria-label',rv.rating+' out of 5 stars');stars.textContent='★'.repeat(rv.rating)+'☆'.repeat(5-rv.rating);
+            const quote=d.createElement('blockquote');quote.textContent=rv.text;
+            const foot=d.createElement('footer');const auth=d.createElement('strong');auth.textContent=rv.author;foot.append(auth);if(rv.time){const tm=d.createElement('span');tm.textContent=' · '+rv.time;foot.append(tm)}
+            art.append(stars,quote,foot);track.append(art);
+          }
+        }
+        win.append(track);car.append(win);wrap.append(car);sec.replaceChildren(wrap);
+        if(gr.placeId&&gr.apiKey&&!d.querySelector('script[src="/google-reviews.js"]')){const sc=d.createElement('script');sc.setAttribute('src','/google-reviews.js');sc.setAttribute('defer','');sec.append(sc)}
+      }
+    }
+  }
   if(s.verification){let v=d.querySelector('meta[name="google-site-verification"]');if(!v){v=d.createElement('meta');v.setAttribute('name','google-site-verification');d.head.append(v)}v.setAttribute('content',s.verification)}
   const font=s.font==='Site default'?'':';--sans:"'+s.font+'",sans-serif';
-  css(d,':root{--accent:'+s.color+';--paper:'+s.paper+';--ink:'+s.ink+';--dark:'+(s.dark||defaults.dark)+';--tint:'+(s.tint||defaults.tint)+';--muted:'+(s.muted||defaults.muted)+';--line:'+(s.line||defaults.line)+font+';font-size:'+s.size/16*100+'%}.cms-section{max-width:78rem}.cms-section p{max-width:70ch;margin:1rem 0}.cms-section img{max-height:30rem;border-radius:1rem}'+(editing?'[data-studio-field]:hover{outline:2px dashed #d54517;cursor:crosshair}[data-studio-hidden]{opacity:.35}':''));
+  css(d,':root{--accent:'+s.color+';--paper:'+s.paper+';--ink:'+s.ink+';--dark:'+(s.dark||defaults.dark)+';--tint:'+(s.tint||defaults.tint)+';--muted:'+(s.muted||defaults.muted)+';--line:'+(s.line||defaults.line)+font+';font-size:'+s.size/16*100+'%}.cms-section{max-width:78rem}.cms-section p{max-width:70ch;margin:1rem 0}.cms-section img{max-height:30rem;border-radius:1rem}.about-photo-grid{display:grid;gap:.6rem;height:100%}.about-photo-count-2{grid-template-columns:1fr 1fr}.about-photo-count-3{grid-template-columns:1fr 1fr}.about-photo-count-3 img:first-child{grid-column:1/-1;max-height:220px}.about-photo-grid img{width:100%;height:100%;object-fit:cover;border-radius:12px}.review-card{padding:1.25rem;border:1px solid var(--line);border-radius:14px;background:#fff;display:grid;gap:.6rem}.review-stars{color:#d97706;font-size:1.05rem;letter-spacing:.08em}'+(editing?'[data-studio-field]:hover{outline:2px dashed #d54517;cursor:crosshair}[data-studio-hidden]{opacity:.35}':''));
   const roleCSS=typographyCSS(s.typography,s.size);if(roleCSS)css(d,roleCSS);
   if(!editing&&(s.ga||s.ads||s.pixel||s.tiktok||s.gtm)){for(const el of d.querySelectorAll('script[src="/analytics.js"],.analytics-settings,.analytics-choices'))el.remove();const script=d.createElement('script');script.setAttribute('src','/studio-tracking.js');script.setAttribute('defer','');for(const k of ['ga','ads','pixel','tiktok','gtm'])if(s[k])script.setAttribute('data-'+k,s[k]);d.body.append(script)}
   return d.toString();

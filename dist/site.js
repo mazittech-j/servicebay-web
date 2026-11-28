@@ -238,6 +238,8 @@ const siteAttribution=(()=>{
   try{
     const cMeta=document.querySelector('meta[name="sb-currencies"]')?.getAttribute('content');
     if(cMeta&&typeof siteRegions!=='undefined'){for(const c of JSON.parse(cMeta)){if(c.code&&!siteRegions[c.code])siteRegions[c.code]={name:c.name,short:c.name,currency:c.currency,rate:Number(c.rate)||1,areaLabel:'Area',areas:['Central','Business District'],timeZone:'Asia/Dubai'}}}
+    const aMeta=document.querySelector('meta[name="sb-areas"]')?.getAttribute('content');
+    if(aMeta&&typeof siteRegions!=='undefined'&&siteRegions.AE){const parsedAreas=JSON.parse(aMeta);if(Array.isArray(parsedAreas)&&parsedAreas.length)siteRegions.AE.areas=parsedAreas}
   }catch{}
   const getCountry=()=>{try{const sel=document.querySelector('select[data-region-select]');const code=sel?.value||'';return (typeof siteRegions!=='undefined'&&siteRegions[code]?.name)||''}catch{return ''}};
   try{

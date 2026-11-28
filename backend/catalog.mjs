@@ -14,7 +14,10 @@ export function catalog(input,base,fail){
       if(!unit||unit.length>50||detail.length>400)fail('Check the item description and unit label.');
       const selected=kind==='service'?sectors.filter(s=>item.sectors?.includes(s)):sectors;
       if(!selected.length)fail('Select at least one property category.');
-      Object.assign(result[id],{description:detail,unit,sectors:selected});
+      const focus=typeof item.focus==='string'?item.focus.trim().slice(0,120):'';
+      const scope=Array.isArray(item.scope)?item.scope.map(s=>String(s||'').trim().slice(0,160)).filter(Boolean).slice(0,8):[];
+      const image=typeof item.image==='string'&&(/^\/(assets|media)\/[\w./-]+$/.test(item.image.trim())||/^https:\/\/[^\s"<>\\]+$/i.test(item.image.trim()))?item.image.trim():'';
+      Object.assign(result[id],{description:detail,unit,sectors:selected,...(focus?{focus}:{}),...(scope.length?{scope}:{}),...(image?{image}:{})});
     }
   }
   return result;
@@ -26,17 +29,32 @@ export function addCustomToPage(d,id,item,money){
   if(item.kind==='service'){
     for(const s of d.querySelectorAll('select[name="service"]'))option(s);
     for(const s of d.querySelectorAll('select[name="core"]')){if(s.closest('form').hasAttribute('data-service'))continue;const opt=option(s);opt.setAttribute('data-rate',String(item.rate));opt.setAttribute('data-unit',item.unit);opt.setAttribute('data-limit','20');opt.setAttribute('data-sectors',item.sectors.join(' '))}
+    for(const grid of d.querySelectorAll('.service-grid-home')){
+      const c=add(grid,'article');c.className='service-card';c.setAttribute('data-service',id);c.setAttribute('data-examples',JSON.stringify(Object.fromEntries(item.sectors.map(s=>[s,item.description||item.name]))));
+      if(item.image){const img=add(c,'img');img.className='trade-photo';img.setAttribute('src',item.image);img.setAttribute('alt',item.name);img.setAttribute('width','670');img.setAttribute('height','447');img.setAttribute('loading','lazy')}
+      else{const mark=add(c,'span');mark.className='card-mark';mark.setAttribute('aria-hidden','true')}
+      add(c,'h3',item.name);
+      add(c,'p',item.description||(money.format(item.rate)+' per '+item.unit));
+      const a=add(c,'a','Request '+item.name);a.className='inline-link';a.setAttribute('href','/contact/?service='+encodeURIComponent(id)+'#enquiry');
+    }
     return;
   }
   for(const s of d.querySelectorAll('select[name="plan"]'))option(s);
   for(const grid of d.querySelectorAll('.estimate-plan-grid')){
     const l=add(grid,'label'),input=add(l,'input');for(const [k,v] of Object.entries({type:'radio',name:'amc',value:id,'data-rate':item.rate,'data-title':item.name}))input.setAttribute(k,String(v));
-    const copy=add(l,'span');add(copy,'strong',item.name);if(item.description)add(copy,'span',item.description).className='tier-focus';
+    const copy=add(l,'span');add(copy,'strong',item.name);if(item.focus||item.description)add(copy,'span',item.focus||item.description).className='tier-focus';
     add(copy,'small',money.format(item.rate)+' / unit / year').setAttribute('data-plan-price','');
   }
   for(const grid of d.querySelectorAll('.amc-tier-grid')){
     const c=add(grid,'article');c.className='amc-tier';add(c,'h3',item.name);
+    add(c,'p',item.focus||'Scheduled preventive maintenance').className='amc-tier-focus';
     const price=add(c,'div');price.className='amc-tier-price';add(price,'strong',money.format(item.rate)).setAttribute('data-annual-rate',String(item.rate));add(price,'span','/ unit / year');
-    if(item.description)add(c,'p',item.description);const a=add(c,'a','Choose '+item.name);a.className='button button-outline';a.setAttribute('href','?service=amc&plan='+id+'#plan-builder');a.setAttribute('data-amc-plan',id);
+    if(item.description)add(c,'p',item.description);
+    if(Array.isArray(item.scope)&&item.scope.length){
+      add(c,'h4','Suggested scope');
+      const ul=add(c,'ul');
+      for(const line of item.scope)add(ul,'li',line);
+    }
+    const a=add(c,'a','Choose '+item.name);a.className='button button-outline';a.setAttribute('href','?service=amc&plan='+id+'#plan-builder');a.setAttribute('data-amc-plan',id);
   }
 }

@@ -140,6 +140,13 @@ function extractErpCatalogItems(payload,depth=0){
   }
   return found?out:null;
 }
+function defaultPlanMeta(name){
+  const lower=String(name||'').toLowerCase();
+  if(/residential|home|villa|apartment/.test(lower))return {focus:'Planned care for homes & villas',description:'Routine AC, plumbing and electrical checks for apartments, villas and family homes.',scope:['List AC units, drains and electrical fixtures','Schedule routine cooling, tap and lighting checks','Record findings and quote for follow-up repairs']};
+  if(/commercial|office|retail|shop/.test(lower))return {focus:'Scheduled care for offices & retail',description:'Preventive maintenance for offices, shops and clinics that need predictable upkeep.',scope:['Build an asset list by room or work zone','Group AC, plumbing and electrical inspections','Track recurring faults and prioritise the next visit']};
+  if(/industrial|warehouse|facility|multi/.test(lower))return {focus:'Multi-unit and site planning',description:'Coordinated preventive visits, asset tracking and reporting across sites.',scope:['Map assets and access contacts for each site','Coordinate visits around shifts or tenant access','Review outstanding work across the portfolio']};
+  return {focus:'Scheduled preventive maintenance',description:'Routine inspection and preventive upkeep tailored to your property.',scope:['List key AC, plumbing and electrical assets','Schedule regular preventive inspection visits','Receive a clear summary after each visit']};
+}
 async function pullErpPricing(env,store,client,{quiet=false,preloadedList=null}={}){
   const list=preloadedList!==null?preloadedList:await client.listServices();
   if(list===null)return {unsupported:true,updatedCount:0,total:0};
@@ -165,21 +172,46 @@ async function pullErpPricing(env,store,client,{quiet=false,preloadedList=null}=
     }
     const rate=(Number.isFinite(parsedRate)&&parsedRate>0)?parsedRate:(matchKey?Number(draft.pricing[matchKey]?.rate||100):100);
     const isActive=!(item.active===false||item.is_active===false||/^(inactive|disabled|archived)$/i.test(String(item.status||'')));
+    const erpDesc=String(item.description||item.summary||'').trim().slice(0,300);
+    const erpFocus=String(item.focus||item.tagline||item.subtitle||'').trim().slice(0,120);
+    const rawScope=item.scope||item.features||item.highlights||item.includes||item.bullets;
+    const erpScope=Array.isArray(rawScope)?rawScope.map(s=>String(s||'').trim().slice(0,160)).filter(Boolean).slice(0,8):[];
     if(matchKey){
-      const prevRate=Number(draft.pricing[matchKey]?.rate),prevName=draft.pricing[matchKey]?.name,prevActive=draft.pricing[matchKey]?.active!==false;
+      const existing=draft.pricing[matchKey]||{};
+      const prevRate=Number(existing.rate),prevName=existing.name,prevActive=existing.active!==false;
       const nextName=name||prevName;
-      if(prevRate!==Math.round(rate*100)/100||prevName!==nextName||prevActive!==isActive||Number(live.pricing[matchKey]?.rate)!==Math.round(rate*100)/100){
-        const upd={...draft.pricing[matchKey],rate,name:nextName};
+      const needPlanMeta=(existing.kind==='plan'||isPlan)&&!pricing[matchKey]&&(!existing.focus||!existing.scope?.length||!existing.description);
+      if(prevRate!==Math.round(rate*100)/100||prevName!==nextName||prevActive!==isActive||Number(live.pricing[matchKey]?.rate)!==Math.round(rate*100)/100||needPlanMeta){
+        const upd={...existing,rate,name:nextName};
+        if(upd.kind==='plan'&&!pricing[matchKey]){
+          const def=defaultPlanMeta(nextName);
+          if(!upd.focus)upd.focus=erpFocus||def.focus;
+          if(!upd.description)upd.description=erpDesc||def.description;
+          if(!Array.isArray(upd.scope)||!upd.scope.length)upd.scope=erpScope.length?erpScope:def.scope;
+        }
         if(!isActive)upd.active=false;else delete upd.active;
         draft.pricing[matchKey]=upd;
         const liveUpd={...(live.pricing[matchKey]||upd),rate,name:nextName};
+        if(upd.focus&&!liveUpd.focus)liveUpd.focus=upd.focus;
+        if(upd.description&&!liveUpd.description)liveUpd.description=upd.description;
+        if(upd.scope&&(!Array.isArray(liveUpd.scope)||!liveUpd.scope.length))liveUpd.scope=upd.scope;
         if(!isActive)liveUpd.active=false;else delete liveUpd.active;
         live.pricing[matchKey]=liveUpd;
         updatedCount++;
       }
     }else if(name){
       const newKey='custom-'+crypto.randomUUID().replaceAll('-','');
-      const entry={kind:isPlan?'plan':'service',name,rate,...(!isActive?{active:false}:{}),description:String(item.description||'').trim().slice(0,300),unit:String(item.unit||'Units').trim().slice(0,30)||'Units',sectors:Array.isArray(item.sectors)&&item.sectors.length?item.sectors:['residential','commercial','industrial']};
+      const def=isPlan?defaultPlanMeta(name):null;
+      const entry={
+        kind:isPlan?'plan':'service',
+        name,
+        rate,
+        ...(!isActive?{active:false}:{}),
+        description:erpDesc||(def?def.description:''),
+        ...(isPlan?{focus:erpFocus||def.focus,scope:erpScope.length?erpScope:def.scope}:{}),
+        unit:String(item.unit||'Units').trim().slice(0,30)||'Units',
+        sectors:Array.isArray(item.sectors)&&item.sectors.length?item.sectors:['residential','commercial','industrial']
+      };
       draft.pricing[newKey]=entry;
       live.pricing[newKey]=structuredClone(entry);
       updatedCount++;
@@ -190,6 +222,23 @@ async function pullErpPricing(env,store,client,{quiet=false,preloadedList=null}=
     await store.save('settings',saved,srow.version,quiet?undefined:event('Website','Pulled service prices from ERP',updatedCount+' updated'));
   }
   return {unsupported:false,updatedCount,total:list.length};
+}
+async function pullErpAreas(store,client){
+  const list=await client.listAreas();
+  if(list===null)return {unsupported:true,areas:[],addedCount:0};
+  const cleaned=[...new Set(list.map(a=>String(a||'').trim().slice(0,80)).filter(Boolean))].slice(0,80);
+  if(!cleaned.length)return {unsupported:false,areas:[],addedCount:0};
+  const srow=await store.get('settings');
+  const curSet=srow.data||{draft:defaults,live:defaults};
+  const draft=structuredClone(curSet.draft||defaults),live=structuredClone(curSet.live||defaults);
+  const existing=Array.isArray(draft.serviceAreas)?draft.serviceAreas:[];
+  const merged=[...new Set([...existing,...cleaned])].slice(0,80);
+  const addedCount=merged.length-existing.length;
+  if(addedCount>0||!existing.length){
+    draft.serviceAreas=merged;live.serviceAreas=[...merged];
+    await store.save('settings',{draft:cleanSettings(draft),live:cleanSettings(live)},srow.version,event('Website','Synced service areas from ERP',merged.length+' areas'));
+  }
+  return {unsupported:false,areas:merged,addedCount};
 }
 async function syncAll(env,store,{limit=100,quiet=false}={}){
   const creds=await erpCredentials(store,env),base=parseErpUrl(creds.apiUrl,creds.apiKey);
@@ -446,6 +495,15 @@ export async function serve(request,env,store,platform){
           const res=await pullErpPricing(env,store,client,{quiet:false});
           if(res.unsupported)fail('No /services, /pricing, or /catalog endpoint found on ServiceHub ERP.',404);
           return json({updatedCount:res.updatedCount,total:res.total,message:res.updatedCount?('Updated '+res.updatedCount+' service prices from ServiceHub ERP.'):'No service prices with valid rates (> 0) found in ERP.'});
+        }
+        if(input.action==='pull-areas'){
+          const creds=await erpCredentials(store,env),base=parseErpUrl(creds.apiUrl,creds.apiKey);
+          if(creds.paused)fail('ServiceHub ERP sync is disconnected in Studio > Integrations.',503);
+          if(!base.canSync)fail('Add a ServiceHub API URL and API key first.',409);
+          const client=createServiceHubClient({baseUrl:creds.apiUrl,apiKey:creds.apiKey});
+          const res=await pullErpAreas(store,client);
+          if(res.unsupported)fail('No /areas, /locations, or /catalog areas found on ServiceHub ERP.',404);
+          return json({areas:res.areas,addedCount:res.addedCount,message:res.addedCount?('Added '+res.addedCount+' service areas from ServiceHub ERP.'):'Service areas are up to date with ERP.'});
         }
         fail('Unknown ERP action.');
       }

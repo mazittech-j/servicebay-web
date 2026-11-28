@@ -523,6 +523,34 @@ test('Traffic source & device attribution tracks visits, compares platforms in a
     assert.equal(bTest.status,'Accepted');
   }finally{globalThis.fetch=original}
 });
+test('Admin media, banners, About photos, logos, areas, schedules, Google reviews, favicon and full AMC cards render live',async()=>{
+  const url='/api/admin/content?scope=site',cur=await (await call(url,{admin:true})).json();
+  const planId='custom-'+'a'.repeat(32);
+  cur.draft.pricing[planId]={kind:'plan',name:'Residential Care',rate:1200,focus:'Planned home care',description:'Routine checks for apartments and villas.',scope:['AC filter wash','Drain flushing']};
+  cur.draft.favicon='/assets/custom-favicon.png';
+  cur.draft.banners=[{image:'/assets/home-maintenance.webp',label:'Hero 1',kicker:'DUBAI CARE',title:'Custom Hero Title',description:'Custom banner text.',position:'center'}];
+  cur.draft.aboutPhotos=[{src:'/assets/about-site-walk.webp',alt:'Photo 1'},{src:'/assets/visit-planning.webp',alt:'Photo 2'},{src:'/assets/team-briefing.webp',alt:'Photo 3'}];
+  cur.draft.clientLogos=[{name:'Test Developer',image:'/assets/servicebay-wordmark.webp',dark:true}];
+  cur.draft.serviceAreas=['Custom District A','Custom District B'];
+  cur.draft.visitSchedules=[{id:'bi-weekly',label:'Bi-weekly',count:26}];
+  cur.draft.googleReviews={enabled:true,profileUrl:'https://maps.google.com/?cid=123',placeId:'',apiKey:'',items:[{author:'Tariq',rating:5,time:'1 week ago',text:'Great AC service!'}]};
+  const pub=await call(url,{admin:true,post:{action:'publish',version:cur.version,value:cur.draft}});
+  assert.equal(pub.status,200);
+  const homeDoc=parseHTML(await (await call('/')).text()).document;
+  assert.equal(homeDoc.querySelector('link[rel="icon"]').getAttribute('href'),'/assets/custom-favicon.png');
+  assert.equal(homeDoc.querySelector('#home-title').textContent,'Custom Hero Title');
+  assert.match(homeDoc.querySelector('.client-logos .logo-group').innerHTML,/Test Developer/);
+  assert.match(homeDoc.querySelector('#availability select[name="area"]').textContent,/Custom District A/);
+  assert.match(homeDoc.querySelector('.amc-calendar .frequency-grid').textContent,/Bi-weekly/);
+  assert.match(homeDoc.querySelector('.home-reviews').textContent,/Great AC service!/);
+  const aboutDoc=parseHTML(await (await call('/about/')).text()).document;
+  assert.ok(aboutDoc.querySelector('.about-photo-count-3'));
+  const amcDoc=parseHTML(await (await call('/amc/')).text()).document;
+  const amcText=amcDoc.querySelector('.amc-tier-grid').textContent;
+  assert.match(amcText,/Planned home care/);
+  assert.match(amcText,/Suggested scope/);
+  assert.match(amcText,/AC filter wash/);
+});
 
 
 
