@@ -135,7 +135,7 @@ function savedRegion() {
 }
 const linkedRegion = new URLSearchParams(location.search).get('country');
 const initialRegion = linkedRegion || savedRegion();
-if (Object.hasOwn(siteRegions, initialRegion)) regionPicker.value = initialRegion;
+if (Object.prototype.hasOwnProperty.call(siteRegions, initialRegion)) regionPicker.value = initialRegion;
 
 function currentRegion() {
   return siteRegions[regionPicker.value];
@@ -419,7 +419,7 @@ for (const form of enquiryForms) {
       if(!value('email')){fields.email.focus();output.textContent='Enter an email to receive your quote receipt.';return}
       const group=form.querySelector('fieldset'),submit=form.querySelector('.form-submit');group.disabled=true;output.textContent='Sending your request…';
       try{
-        if(!receipt)receipt='SB-'+Date.now().toString(36).toUpperCase()+'-'+crypto.randomUUID().replaceAll('-','').toUpperCase();
+        if(!receipt)receipt='SB-'+Date.now().toString(36).toUpperCase()+'-'+crypto.randomUUID().replace(/-/g,'').toUpperCase();
         const photo=await readPhotoFile(fields.namedItem('photo'));
         const res=await fetch('/api/portal/requests',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:receipt,name:value('name'),email:value('email'),phone:value('mobile'),service,serviceId:value('service'),planId:value('plan'),plan:value('plan')?plan.selectedOptions[0].textContent:'',area:value('area'),property:value('property'),country:siteRegions[country.value].name,details:value('details'),slot:value('slot')||(params.get('visit')||'').trim().slice(0,120),schedule:value('schedule'),...(photo?{photo}:{}),...siteAttribution,password:values.get('portalPassword')||'',_sb_hp:value('_sb_hp'),message})});
         let r={};try{r=await res.json()}catch{}
@@ -483,7 +483,7 @@ for (const workflow of document.querySelectorAll('[data-workflow]')) {
         Home: 0,
         End: tabs.length - 1,
       };
-      if (!Object.hasOwn(keys, event.key)) return;
+      if (!Object.prototype.hasOwnProperty.call(keys, event.key)) return;
       event.preventDefault();
       showStep(keys[event.key]);
       tabs[keys[event.key]].focus();

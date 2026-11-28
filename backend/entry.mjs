@@ -1,1 +1,1 @@
-export {default} from './worker.mjs';
+export {default, runBackgroundTick} from './worker.mjs';

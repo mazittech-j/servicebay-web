@@ -551,6 +551,20 @@ test('Admin media, banners, About photos, logos, areas, schedules, Google review
   assert.match(amcText,/Suggested scope/);
   assert.match(amcText,/AC filter wash/);
 });
+test('Health check, /api/cron/tick automation, and legacy-compatible site.js bundle work',async()=>{
+  const h=await call('/api/health');
+  assert.equal(h.status,200);
+  assert.equal((await h.json()).ok,true);
+  const cron=await call('/api/cron/tick',{post:{}});
+  assert.equal(cron.status,200);
+  const cJson=await cron.json();
+  assert.equal(cJson.ok,true);
+  const cronCool=await call('/api/cron/tick',{post:{}});
+  assert.equal((await cronCool.json()).skipped,true);
+  const siteJs=await (await call('/site.js')).text();
+  assert.doesNotMatch(siteJs,/\?\./);
+  assert.doesNotMatch(siteJs,/Object\.hasOwn\(/);
+});
 
 
 

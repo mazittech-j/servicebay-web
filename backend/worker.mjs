@@ -287,17 +287,101 @@ async function syncAll(env,store,{limit=100,quiet=false}={}){
   }catch{}
   return {total:unsent.length,sent,failed,updated,pricesUpdated,pricingNote,errors,lastSync,state:await erpState(store,env)};
 }
+export async function runBackgroundTick(env,store,origin=''){
+  const out={erp:null,areas:0,followUps:0,renewals:0,alerts:0};
+  try{
+    const creds=await erpCredentials(store,env),base=parseErpUrl(creds.apiUrl,creds.apiKey);
+    if(creds.autoSync&&!creds.paused&&base.canSync){
+      try{
+        const res=await syncAll(env,store,{limit:25,quiet:true});
+        out.erp=res.lastSync;
+        if(res.failed>0){
+          out.alerts++;
+          await store.record(event('Alert','ERP sync failure',res.failed+' request(s) failed: '+(res.errors?.[0]||'Check ERP connection')));
+        }
+        try{
+          const ar=await pullErpAreas(store,createServiceHubClient({baseUrl:creds.apiUrl,apiKey:creds.apiKey}));
+          out.areas=ar.addedCount||0;
+        }catch{}
+      }catch(e){
+        out.alerts++;
+        try{await store.record(event('Alert','ERP auto-sync error',String(e?.message||'Sync failed').slice(0,140)))}catch{}
+      }
+    }
+  }catch{}
+  try{
+    const mailCfg=await mailSettings(store,env);
+    if(mailCfg.configured){
+      let cursor='request/~',scanned=0;
+      const now=Date.now();
+      do{
+        const page=await store.inbox(cursor);
+        for(const r of page.items||[]){
+          scanned++;
+          if(!r.email||!r.at)continue;
+          const age=now-Date.parse(r.at);
+          if(!Number.isFinite(age))continue;
+          const portalLink=(origin?origin:'')+'/portal/';
+          if(!r.followUpSentAt&&['New','Quoted'].includes(r.status||'New')&&age>=48*3600*1000&&age<=14*86400*1000&&out.followUps<5){
+            try{
+              const mailRes=await sendSystemEmail(store,env,{
+                to:r.email,
+                subject:'Following up on your ServiceBay request ('+(r.receipt||r.service||'Quote')+')',
+                text:'Hello '+(r.name||'there')+',\n\nWe wanted to follow up on your '+(r.service||'maintenance')+' request'+(r.receipt?' (receipt '+r.receipt+')':'')+'.\n\nYou can check your request status or reply with any extra details in your portal: '+portalLink+'\n\nServiceBay Technical Services',
+                idempotencyKey:'followup-'+(r.external||r.receipt||r.key)
+              });
+              if(mailRes?.status==='Accepted'){
+                const curRow=await store.get(r.key);
+                if(curRow.data)await store.save(r.key,{...curRow.data,followUpSentAt:new Date().toISOString()},curRow.version);
+                out.followUps++;
+              }
+            }catch{}
+          }
+          if(!r.renewalSentAt&&r.status==='Completed'&&(/amc|annual|contract/i.test(r.service||'')||r.planId)&&age>=335*86400*1000&&age<=400*86400*1000&&out.renewals<5){
+            try{
+              const mailRes=await sendSystemEmail(store,env,{
+                to:r.email,
+                subject:'Your annual maintenance plan is due for renewal',
+                text:'Hello '+(r.name||'there')+',\n\nYour annual maintenance contract'+(r.receipt?' ('+r.receipt+')':'')+' is approaching its annual renewal.\n\nVisit '+portalLink+' or reply to schedule your next year of preventive visits.\n\nServiceBay Technical Services',
+                idempotencyKey:'renewal-'+(r.external||r.receipt||r.key)
+              });
+              if(mailRes?.status==='Accepted'){
+                const curRow=await store.get(r.key);
+                if(curRow.data)await store.save(r.key,{...curRow.data,renewalSentAt:new Date().toISOString()},curRow.version);
+                out.renewals++;
+              }
+            }catch{}
+          }
+        }
+        cursor=page.next;
+      }while(cursor&&scanned<200);
+    }
+  }catch{}
+  return out;
+}
 function assetResponse(entry){const [type,zipped,source]=entry;const buffer=bytes(source);let stream=buffer;if(zipped)stream=new Blob([buffer]).stream().pipeThrough(new DecompressionStream('gzip'));return new Response(stream,{headers:{'Content-Type':type+(type.startsWith('text/')?'; charset=utf-8':''),'X-Content-Type-Options':'nosniff','Cache-Control':type==='text/html'?'private, no-store':'private, max-age=300'}})}
 export async function serve(request,env,store,platform){
   try{
     const u=new URL(request.url),path=u.pathname,method=request.method;
     if(!['GET','POST','HEAD'].includes(method))return json({error:'Unsupported method.'},405);
     const reqOrigin=request.headers.get('origin');
-    if(method==='POST'&&path!=='/api/erp/webhook'&&reqOrigin!==u.origin&&(!platform.requestOrigin||reqOrigin!==platform.requestOrigin))return json({error:'Open the form on this site and retry.'},403);
+    if(method==='POST'&&path!=='/api/erp/webhook'&&path!=='/api/cron/tick'&&reqOrigin!==u.origin&&(!platform.requestOrigin||reqOrigin!==platform.requestOrigin))return json({error:'Open the form on this site and retry.'},403);
     const probeReason=detectProbe(path,u.search);
     if(probeReason){
       await recordIncident({db:store,env,ip:platform.ip,reason:'Attack probe blocked',target:path,detail:probeReason,immediateBlock:true});
       return json({error:'Request blocked by security shield.'},403);
+    }
+    if(path==='/api/health')return json({ok:true,time:new Date().toISOString()});
+    if(path==='/api/cron/tick'){
+      const secret=String(env.CRON_SECRET||'').trim();
+      if(secret){
+        const tok=u.searchParams.get('token')||(request.headers.get('authorization')||'').replace(/^Bearer\s+/i,'').trim();
+        if(tok!==secret)return json({error:'Invalid cron token.'},401);
+      }
+      const cRow=await store.get('security/cron'),lastAt=Number(cRow.data?.lastAt||0);
+      if(Date.now()-lastAt<120000)return json({skipped:true,nextInMs:120000-(Date.now()-lastAt)});
+      await store.save('security/cron',{lastAt:Date.now()},cRow.version);
+      return json({ok:true,...(await runBackgroundTick(env,store,u.origin))});
     }
     if(path==='/api/erp/webhook'){
       const creds=await erpCredentials(store,env);

@@ -67,6 +67,14 @@ async function sendViaProvider(config,{from,to,subject,text,idempotencyKey,timeo
   return {response,ok:response.ok&&!!data.id,id:data.id||'',errorMsg:data.message||data.name||''};
 }
 
+function serviceChecklistTip(service){
+  const s=String(service||'').toLowerCase();
+  if(/ac|hvac|cool|chiller/.test(s))return '\n\nPreparation tip: Please keep the thermostat accessible and clear space below indoor units or balcony condensers.';
+  if(/plumb|leak|water|pump|drain/.test(s))return '\n\nPreparation tip: If there is an active leak, shut off the nearest isolation valve and keep the under-sink or pump area clear.';
+  if(/electr|power|panel|light/.test(s))return '\n\nPreparation tip: Please ensure access to the main distribution board (DB) and note any circuits that tripped.';
+  if(/amc|annual|contract|maintenance/.test(s))return '\n\nPreparation tip: Listing your AC units, rooms, and preferred visit days helps us finalise your AMC proposal faster.';
+  return '\n\nPreparation tip: Share any access or building permit requirements in your portal if needed before our visit.';
+}
 export async function sendReceipt(db,env,key,siteOrigin){
   const config=await settings(db,env,true);
   let row=(await db.get(key)).data;
@@ -88,7 +96,8 @@ export async function sendReceipt(db,env,key,siteOrigin){
   if(Date.now()-m.started>=86400000)return 'Needs delivery check';
   let status='Sending',id;
   try{
-    const res=await sendViaProvider(config,{from:m.from,to:intent.email,subject:'Your ServiceBay quote request receipt',text:'We received your '+(intent.service||'service')+' request.\n\nYour private receipt code is '+intent.receipt+'\n\nOpen your customer portal: '+m.link+'\n\nKeep this receipt private.\nServiceBay Technical Services',idempotencyKey:intent.external+'-receipt-'+m.attempt,timeoutMs:4000});
+    const tip=serviceChecklistTip(intent.service);
+    const res=await sendViaProvider(config,{from:m.from,to:intent.email,subject:'Your ServiceBay quote request receipt',text:'We received your '+(intent.service||'service')+' request.\n\nYour private receipt code is '+intent.receipt+'\n\nOpen your customer portal: '+m.link+tip+'\n\nKeep this receipt private.\nServiceBay Technical Services',idempotencyKey:intent.external+'-receipt-'+m.attempt,timeoutMs:4000});
     if(res.ok){status='Accepted';id=res.id}
     else if(res.response.status>=400&&res.response.status<500&&![408,409,429].includes(res.response.status))status='Rejected';
   }catch{/* The same key can be safely retried inside the provider's time window. */}
