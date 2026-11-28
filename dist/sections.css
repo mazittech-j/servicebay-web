@@ -1013,7 +1013,7 @@ html:has(.quote-dialog[open]) { overflow: hidden; }
 .site-header nav { gap: .14rem clamp(.14rem, .45vw, .45rem); }
 .site-header > .head-inner > .button { border-radius: .6rem; padding-inline: 1rem; font-size: .925rem; }
 .site-header #menu-toggle { font-size: .98rem; }
-.banner-inner { padding-block: clamp(1.9rem, 3.8vw, 3.4rem) clamp(2.9rem, 4vw, 3.8rem); }
+.banner-inner { padding-block: clamp(2.85rem, 5.4vw, 5.1rem) clamp(3.9rem, 5.5vw, 5.6rem); }
 .banner-copy { min-height: 12.5rem; }
 .banner-copy h1 { max-width: 23ch; }
 .home-banner::before { background: linear-gradient(90deg,#071124f0 0%,#0a142ac9 37%,#101c2c4a 66%,#101a2724 100%),linear-gradient(0deg,#07102380,transparent 55%); }
@@ -1115,7 +1115,7 @@ html:has(.quote-dialog[open]) { overflow: hidden; }
 }
 @media (max-width: 525px) {
   .home-banner::before { background: linear-gradient(90deg,#061125ec,#0b1628b3 72%,#0c172b77); }
-  .banner-inner { padding-block: 1.45rem 2.7rem; }
+  .banner-inner { padding-block: 2.05rem 3.35rem; }
   .banner-copy h1 { max-width: 22ch; }
   .contact-channels { padding-inline: .85rem; }
   .payment-methods { gap: .4rem .65rem; }
