@@ -46,19 +46,26 @@
         buttons(custom,button('Add section',()=>{data.sections.push({heading:'',body:'',image:'',alt:''});dirty=true;drawSections();custom.querySelectorAll('input')[custom.querySelectorAll('input').length-4]?.focus()}))}
       drawSections();actions(panel);
       preview.onload=()=>{const doc=preview.contentDocument;if(!doc)return;visibility.replaceChildren(el('h2','Page sections'));for(const s of doc.querySelectorAll('[data-studio-section]')){const key=s.dataset.studioSection,l=el('label',undefined,'check'),c=el('input');c.type='checkbox';c.checked=!data.hidden.includes(key);c.onchange=()=>{data.hidden=data.hidden.filter(x=>x!==key);if(!c.checked)data.hidden.push(key);s.style.opacity=c.checked?'1':'.35';dirty=true};l.append(c,document.createTextNode(s.dataset.studioLabel));visibility.append(l)}
-        pagePhotos.replaceChildren(el('h2','Page photos'));
-        if(page==='/about/')pagePhotos.append(el('p','Tip: To show 2–3 photos at the top of About Us, go to Company & theme → About Us top photos.','hint'));
         const imgs=[...doc.querySelectorAll('img[data-studio-field]')];
+        pagePhotos.replaceChildren(el('h2','Page photos ('+imgs.length+')'));
+        if(page==='/about/')pagePhotos.append(el('p','Tip: To add 2–3 photos at the top of About Us, open Company & theme → Banners & Photos.','hint'));
         if(!imgs.length)pagePhotos.append(el('p','No editable photos on this page.','hint'));
         imgs.forEach((im,idx)=>{
           const k=im.dataset.studioField,base={src:im.getAttribute('src')||'',alt:im.getAttribute('alt')||''};
-          const row=el('div',undefined,'panel-row');
+          const secEl=im.closest('[data-studio-section]');
+          const secName=im.closest('[data-label]')?.dataset.label||secEl?.querySelector('h1,h2,h3')?.textContent?.trim()||secEl?.dataset.studioLabel||im.closest('figure')?.querySelector('figcaption')?.textContent?.trim()||('Section '+(idx+1));
           const cur=()=>data.changes[k]||base;
-          const lbl=el('p',(im.getAttribute('alt')||('Photo '+(idx+1)))+(im.naturalWidth?(' ('+im.naturalWidth+'×'+im.naturalHeight+' px)'):''),'hint');
-          row.append(lbl);
-          assetField(row,'Image URL',cur().src,v=>{const s={...cur(),src:v};data.changes[k]=s;im.src=v;im.removeAttribute('srcset')});
-          const altIn=field(row,'Alt text',cur().alt);altIn.oninput=()=>{const s={...cur(),alt:altIn.value};data.changes[k]=s;im.alt=altIn.value;dirty=true};
-          pagePhotos.append(row);
+          const det=el('details',undefined,'photo-item');
+          const sum=el('summary');
+          const th=el('img',undefined,'photo-thumb');th.src=cur().src;th.alt='';
+          const meta=el('span',undefined,'photo-meta');
+          const sizeTxt=im.naturalWidth?(im.naturalWidth+'×'+im.naturalHeight+' px'):'Photo '+(idx+1);
+          meta.append(el('strong',secName),el('small',sizeTxt+(cur().alt?' · '+cur().alt:'')));
+          sum.append(th,meta);det.append(sum);
+          const body=el('div',undefined,'photo-body');
+          assetField(body,'Image URL',cur().src,v=>{const s={...cur(),src:v};data.changes[k]=s;im.src=v;th.src=v;im.removeAttribute('srcset')});
+          const altIn=field(body,'Alt text',cur().alt);altIn.oninput=()=>{const s={...cur(),alt:altIn.value};data.changes[k]=s;im.alt=altIn.value;dirty=true};
+          det.append(body);pagePhotos.append(det);
         });
         doc.addEventListener('submit',e=>e.preventDefault(),true);doc.addEventListener('click',e=>{e.preventDefault();e.stopImmediatePropagation();const f=e.target.closest('[data-studio-field]');if(!f)return;const k=f.dataset.studioField;selected.replaceChildren(el('h2','Selected content'));
           if(f.tagName==='IMG'){const base={src:f.getAttribute('src'),alt:f.getAttribute('alt')||''};const s=data.changes[k]||base;const change=()=>{data.changes[k]=s;f.src=s.src;f.removeAttribute('srcset');f.alt=s.alt};assetField(selected,'Image URL',s.src,v=>{s.src=v;change()});const alt=field(selected,'Image description',s.alt);alt.oninput=()=>{s.alt=alt.value;change()}}
@@ -116,10 +123,10 @@
       function drawSched(){
         schedList.replaceChildren();
         data.visitSchedules.forEach((sc,idx)=>{
-          const row=el('div',undefined,'fields');
-          const lbl=field(row,'Schedule label (e.g. Monthly)',sc.label);lbl.oninput=()=>{sc.label=lbl.value;sc.id=lbl.value.toLowerCase().replace(/[^a-z0-9-]+/g,'-')||'custom';dirty=true};
-          const cnt=field(row,'Visits per year',sc.count,'number');cnt.min=1;cnt.max=365;cnt.oninput=()=>{sc.count=Math.max(1,Number(cnt.value)||1);dirty=true};
-          row.append(button('Remove',()=>{data.visitSchedules.splice(idx,1);dirty=true;drawSched()},'secondary'));
+          const row=el('div',undefined,'sched-row');
+          const lbl=field(row,'Schedule label',sc.label);lbl.oninput=()=>{sc.label=lbl.value;sc.id=lbl.value.toLowerCase().replace(/[^a-z0-9-]+/g,'-')||'custom';dirty=true};
+          const cnt=field(row,'Visits/yr',sc.count,'number');cnt.min=1;cnt.max=365;cnt.oninput=()=>{sc.count=Math.max(1,Number(cnt.value)||1);dirty=true};
+          row.append(button('×',()=>{data.visitSchedules.splice(idx,1);dirty=true;drawSched()},'secondary'));
           schedList.append(row);
         });
       }
@@ -129,36 +136,45 @@
       const areaCard=card(panel,'Service slot locations / areas');
       areaCard.append(el('p','Manage the areas shown in "Find a service slot". You can also sync areas from ServiceHub ERP.'));
       if(!Array.isArray(data.serviceAreas)||!data.serviceAreas.length)data.serviceAreas=['Al Barsha','Arabian Ranches','Bur Dubai','Business Bay','Deira','Downtown Dubai','Dubai Hills','Dubai Marina','Dubai Silicon Oasis','JLT','Jumeirah','JVC','JVT','Mirdif','Motor City','Palm Jumeirah','Sports City'];
-      const areaList=el('div');areaCard.append(areaList);
+      const areaList=el('div',undefined,'area-grid');areaCard.append(areaList);
       function drawAreas(){
         areaList.replaceChildren();
         data.serviceAreas.forEach((ar,idx)=>{
-          const row=el('div',undefined,'fields');
-          const inp=field(row,'Area / location name',ar);inp.oninput=()=>{data.serviceAreas[idx]=inp.value;dirty=true};
-          row.append(button('Remove',()=>{data.serviceAreas.splice(idx,1);dirty=true;drawAreas()},'secondary'));
-          areaList.append(row);
+          const pill=el('div',undefined,'area-pill');
+          const inp=el('input');inp.type='text';inp.value=ar;inp.placeholder='Area name';inp.setAttribute('aria-label','Area name');
+          inp.oninput=()=>{data.serviceAreas[idx]=inp.value;dirty=true};
+          pill.append(inp,button('×',()=>{data.serviceAreas.splice(idx,1);dirty=true;drawAreas()},'secondary'));
+          areaList.append(pill);
         });
       }
       drawAreas();
-      const areaActs=[button('Add location',()=>{data.serviceAreas.push('');dirty=true;drawAreas()},'secondary')];
+      const areaActs=[button('Add location',()=>{data.serviceAreas.push('');dirty=true;drawAreas();areaList.lastElementChild?.querySelector('input')?.focus()},'secondary')];
       if(cfg.integrations?.canSync&&!cfg.integrations?.paused)areaActs.push(button('Sync areas from ERP',async()=>{const res=await api('erp',{action:'pull-areas'});if(res.areas?.length)data.serviceAreas=res.areas;drawAreas();dirty=false;notice.textContent=res.message||'Areas synced from ERP.'},'secondary'));
       buttons(areaCard,...areaActs);
 
       actions(panel);return;
     }
     if(tab==='company'){
-      const c=card(panel,'Company details'),g=el('div',undefined,'fields');c.append(g);
+      const subNav=el('div',undefined,'report-tabs');panel.append(subNav);
+      const brandPane=el('div'),mediaPane=el('div'),reviewsPane=el('div');
+      panel.append(brandPane,mediaPane,reviewsPane);
+      const subPanes=[['Brand & Theme',brandPane],['Banners & Photos',mediaPane],['Google Reviews',reviewsPane]];
+      let activeSub=0;
+      const showSub=idx=>{activeSub=idx;subPanes.forEach(([,p],i)=>{p.hidden=i!==idx;subNav.children[i]?.setAttribute('aria-pressed',String(i===idx))})};
+      subPanes.forEach(([title],i)=>subNav.append(button(title,()=>showSub(i))));
+      showSub(0);
+      const c=card(brandPane,'Company details'),g=el('div',undefined,'fields');c.append(g);
       for(const [key,label] of Object.entries({name:'Company name',email:'Contact email',phone:'Phone with country code',whatsapp:'WhatsApp number, digits only',address:'Office address',hours:'Opening hours'}))bind(field(g,label,data[key]),key);
       assetField(c,'Company logo (recommended: 850×165 px)',data.logo,v=>data.logo=v);
       assetField(c,'Browser tab / short logo (Favicon · recommended: 64×64 px PNG/ICO)',data.favicon||cfg.defaults.favicon,v=>data.favicon=v);
-      const theme=card(panel,'Website appearance'),grid=el('div',undefined,'fields');theme.append(grid);
+      const theme=card(brandPane,'Website appearance'),grid=el('div',undefined,'fields');theme.append(grid);
       bind(field(grid,'Font family',data.font,'text',cfg.fonts),'font');const size=bind(field(grid,'Base font size (px)',data.size,'number'),'size');size.min=14;size.max=24;
       typeControls(theme,data,size);
       const colorFields={color:'Accent',paper:'Page background',ink:'Body text',dark:'Dark sections & footer',tint:'Tinted card surface',muted:'Muted / secondary text',line:'Borders & dividers'};
       const colorInputs={};
       for(const [key,label] of Object.entries(colorFields))colorInputs[key]=bind(field(grid,label,data[key]||cfg.defaults[key],'color'),key);
       buttons(theme,button('Reset website colors',()=>{for(const k of Object.keys(colorFields)){data[k]=cfg.defaults[k];colorInputs[k].value=cfg.defaults[k]}dirty=true;notice.textContent='Website colors reset to defaults. Publish changes to apply.'},'secondary'));
-      const navCard=card(panel,'Navigation menu');navCard.append(el('p','Customize your top menubar links or add new pages/external links.'));
+      const navCard=card(brandPane,'Navigation menu');navCard.append(el('p','Customize your top menubar links or add new pages/external links.'));
       const defNav=[{label:'Home',href:'/',enabled:true},{label:'Services',href:'/services/',enabled:true},{label:'AMC Plans',href:'/amc/',enabled:true},{label:'Cost estimator',href:'/estimate/',enabled:true},{label:'About Us',href:'/about/',enabled:true},{label:'Service areas',href:'/service-areas/',enabled:true},{label:'Contact',href:'/contact/',enabled:true}];
       if(!Array.isArray(data.menu)||!data.menu.length)data.menu=structuredClone(defNav);
       const navList=el('div');navCard.append(navList);
@@ -176,7 +192,7 @@
       drawMenu();
       buttons(navCard,button('Add menu link',()=>{data.menu.push({label:'New link',href:'/contact/',enabled:true});dirty=true;drawMenu()},'secondary'),button('Reset default menu',()=>{data.menu=[];dirty=true;drawMenu()},'secondary'));
 
-      const curCard=card(panel,'Currencies & countries');curCard.append(el('p','Add extra currencies (converted from 1 AED) to appear in the website top bar and cost estimator.'));
+      const curCard=card(brandPane,'Currencies & countries');curCard.append(el('p','Add extra currencies (converted from 1 AED) to appear in the website top bar and cost estimator.'));
       if(!Array.isArray(data.currencies))data.currencies=[];
       const curList=el('div');curCard.append(curList);
       function drawCur(){
@@ -194,7 +210,7 @@
       drawCur();
       buttons(curCard,button('Add currency',()=>{data.currencies.push({code:'US',name:'USA',currency:'USD',rate:0.2723});dirty=true;drawCur()},'secondary'));
 
-      const banCard=card(panel,'Homepage banners');
+      const banCard=card(mediaPane,'Homepage banners');
       banCard.append(el('p','Recommended banner size: 1400 × 933 px (3:2 landscape, WebP/JPG/PNG). Leave empty to keep default banners.'));
       if(!Array.isArray(data.banners))data.banners=[];
       const banList=el('div');banCard.append(banList);
@@ -217,7 +233,7 @@
       drawBanners();
       buttons(banCard,button('Add banner',()=>{data.banners.push({image:'/assets/home-maintenance.webp',label:'Slide '+(data.banners.length+1),kicker:'RESIDENTIAL & COMMERCIAL',title:'Property Maintenance & Technical Services in Dubai',description:'',position:'center'});dirty=true;drawBanners()},'secondary'));
 
-      const abCard=card(panel,'About Us top photos (up to 3)');
+      const abCard=card(mediaPane,'About Us top photos (up to 3)');
       abCard.append(el('p','Add 1 to 3 photos at the top of the About Us page (recommended: 1200 × 800 px each).'));
       if(!Array.isArray(data.aboutPhotos))data.aboutPhotos=[];
       const abList=el('div');abCard.append(abList);
@@ -234,7 +250,7 @@
       drawAboutPhotos();
       buttons(abCard,button('Add About Us photo',()=>{if(data.aboutPhotos.length>=3){notice.textContent='Up to 3 top photos are supported on About Us.';return}data.aboutPhotos.push({src:'/assets/about-site-walk.webp',alt:'ServiceBay team'});dirty=true;drawAboutPhotos()},'secondary'));
 
-      const logoCard=card(panel,'Developers & communities logos');
+      const logoCard=card(mediaPane,'Developers & communities logos');
       logoCard.append(el('p','Add or customize developer & community logos on the homepage (recommended: 300 × 112 px transparent PNG/WebP). Leave empty to keep default logos.'));
       if(!Array.isArray(data.clientLogos))data.clientLogos=[];
       const logoList=el('div');logoCard.append(logoList);
@@ -253,7 +269,7 @@
       drawClientLogos();
       buttons(logoCard,button('Add developer logo',()=>{data.clientLogos.push({name:'',image:'',dark:false});dirty=true;drawClientLogos()},'secondary'));
 
-      const revCard=card(panel,'Google reviews');
+      const revCard=card(reviewsPane,'Google reviews');
       revCard.append(el('p','Show customer reviews on your homepage — either automatically via Google Place ID + API key, or by adding reviews manually below.'));
       if(!data.googleReviews||typeof data.googleReviews!=='object')data.googleReviews={enabled:true,profileUrl:'',placeId:'',apiKey:'',items:[]};
       if(!Array.isArray(data.googleReviews.items))data.googleReviews.items=[];
